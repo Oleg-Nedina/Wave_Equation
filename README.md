@@ -115,7 +115,4 @@ Benchmark: Confrontare il tempo di esecuzione per step rispetto all'implicito.
 
 [4] Project Specification Document (projects.pdf).
 
-Authors
-[Tuo Nome] - Initial Work, Implicit Solver, MPI Setup
 
-[Nome Collega] - Explicit Solver, Mass Lumping, Error Analysis
