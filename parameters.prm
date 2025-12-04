@@ -1,0 +1,20 @@
+# Parameters per Wave Equation Solver
+
+# --- Geometry ---
+set Global refinement   = 4
+set Number of cycles    = 1    #  1 è per test automatici
+
+# --- Time Stepping ---
+set Final time          = 1.0
+set Time step           = 0.01
+set Output frequency    = 10   # Salva ogni 10 step
+
+# --- Method Selection ---
+# Options: IMPLICIT, EXPLICIT
+set Time integration method = IMPLICIT
+
+# --- Newmark Parameters ---
+# Caso A (Implicito): beta=0.25, gamma=0.5
+# Caso B (Esplicito): beta=0.0,  gamma=0.5
+set Newmark beta        = 0.25
+set Newmark gamma       = 0.5
