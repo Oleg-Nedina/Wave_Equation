@@ -45,7 +45,7 @@ is documented in detail inside the repository.
 
 ➡️ Please refer to the files:
 
-- `wave_equation.hpp` — mathematical formulation and comments  
+- `./repo` — mathematical formulation and comments  
 - `wave_equation.cpp` — implementation details of the scheme  
 
 For readability reasons, the full equations are not rendered in this Markdown file.
