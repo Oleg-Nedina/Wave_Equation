@@ -9,20 +9,43 @@ This project implements a parallel Finite Element Method (FEM) solver for the sc
 
 The solver currently focuses on the **Implicit Newmark-Beta** time integration scheme, ensuring unconditional stability for stiff problems.
 
-### 📐 Mathematical Formulation
-The problem solves the strong form:
-$$
-\begin{cases}
-\frac{\partial^2 u}{\partial t^2} - \Delta u = f & \text{in } \Omega \times (0, T] \\
-u = g(t) & \text{on } \partial\Omega \\
-u(\mathbf{x},0) = u_0, \quad \dot{u}(\mathbf{x},0) = v_0 & \text{in } \Omega
-\end{cases}
-$$
+## 🔢 Mathematical Formulation
 
-The semi-discrete algebraic system solved at each time step is:
-$$
-\left( \frac{1}{\beta \Delta t^2} \mathbf{M} + \mathbf{K} \right) \mathbf{U}_{n+1} = \mathbf{F}_{n+1} + \mathbf{M} \left[ \frac{1}{\beta \Delta t^2} \mathbf{U}_n + \frac{1}{\beta \Delta t} \mathbf{V}_n + \frac{1-2\beta}{2\beta} \mathbf{A}_n \right]
-$$
+The problem solves the strong form:
+
+```math
+egin{cases}
+rac{\partial^2 u}{\partial t^2} - \Delta u = f 
+& 	ext{in } \Omega 	imes (0, T] \[6pt]
+u = g(t) 
+& 	ext{on } \partial\Omega \[6pt]
+u(\mathbf{x},0) = u_0,\quad 
+rac{\partial u}{\partial t}(\mathbf{x},0) = v_0 
+& 	ext{in } \Omega
+\end{cases}
+```
+
+The semi-discrete Newmark system solved at each timestep is:
+
+```math
+\left( 
+    rac{1}{eta \Delta t^2}\mathbf{M} 
+    + \mathbf{K}
+
+ight)
+\mathbf{U}_{n+1}
+=
+\mathbf{F}_{n+1}
++
+\mathbf{M}
+\left(
+    rac{1}{eta \Delta t^2}\mathbf{U}_n
+    + rac{1}{eta \Delta t}\mathbf{V}_n
+    + rac{1 - 2eta}{2eta}\mathbf{A}_n
+
+ight)
+```
+
 
 ---
 
