@@ -63,7 +63,7 @@ The solver includes 5 built-in scenarios to verify correctness and demonstrate p
 mkdir build
 cd build
 cmake ..
-make -j4  # Compiles using 4 correctness
+make -j4  # Compiles using a suitable number (just let -j for the defoult)
 ```
 
 
