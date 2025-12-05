@@ -5,9 +5,9 @@ set Global refinement   = 4
 set Number of cycles    = 1    #  1 è per test automatici
 
 # --- Time Stepping ---
-set Final time          = 1.0
+set Final time          = 5.0
 set Time step           = 0.01
-set Output frequency    = 10   # Salva ogni 10 step
+set Output frequency    = 1   # Salva ogni 10 step
 
 # --- Method Selection ---
 # Options: IMPLICIT, EXPLICIT
