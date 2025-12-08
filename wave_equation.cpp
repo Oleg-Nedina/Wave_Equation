@@ -617,6 +617,229 @@ template <int dim>
         }
     }
 
+    /**
+     * @brief Computes the Lumped Mass Matrix (Diagonal) and its Inverse.
+     * Technique: Row-Summing the consistent mass matrix.
+     * M_lumped_ii = Sum_j (M_consistent_ij)
+     */
+    template <int dim>
+    void WaveEquation<dim>::compute_lumped_mass_matrix() {
+        pcout << "  Computing Lumped Mass Matrix..." << std::endl;
+
+        // 1. Create ones vector
+        TrilinosWrappers::MPI::Vector ones(locally_owned_dofs, mpi_communicator);
+        ones = 1.0;
+
+        // 2. Perform Matrix-Vector multiplication: M_lumped = M_consistent * ones
+        // This effectively sums rows.
+        mass_matrix.vmult(lumped_mass_matrix, ones);
+
+        // 3. Compute Inverse Mass Vector (for explicit division)
+        // Reusing ones vector or create new one to store 1/M.
+        // Note: Must iterate manually because Trilinos vectors don't support element-wise division easily.
+
+        // Store inverse in 'lumped_mass_matrix' directly to save memory
+        // For safety, invert in place.
+
+        for (unsigned int i = 0; i < lumped_mass_matrix.local_size(); ++i) {
+            if (lumped_mass_matrix[i] > 1e-15) {
+                lumped_mass_matrix[i] = 1.0 / lumped_mass_matrix[i];
+            } else {
+                // Handle potential zero mass (should not happen with standard Q1 elements)
+                lumped_mass_matrix[i] = 0.0;
+            }
+        }
+
+        pcout << "  Mass Lumping complete (stored as Inverse Mass)." << std::endl;
+    }
+
+    /**
+     * @brief Automatically selects a stable time step based on the mesh size.
+     * Sets time_step = 0.9 * h_min / (c * sqrt(dim))
+     */
+    template <int dim>
+    void WaveEquation<dim>::auto_check_cfl_condition() {
+        pcout << "  Auto_Checking CFL Condition..." << std::endl;
+
+        // Find local minimum h
+        double min_h_local = std::numeric_limits<double>::max();
+
+        for (const auto &cell : dof_handler.active_cell_iterators()) {
+            if (cell->is_locally_owned()) {
+                min_h_local = std::min(min_h_local, cell->diameter());
+            }
+        }
+
+        // Find global minimum h
+        const double min_h_global = Utilities::MPI::min(min_h_local, mpi_communicator);
+
+        // Define Wave Speed
+        const double wave_speed = 1.0;
+
+        // Calculate Critical Time Step
+        // CFL Limit: dt <= h / (c * sqrt(d))
+        const double dt_critical = min_h_global / (wave_speed * std::sqrt(dim));
+
+        //Apply Safety Factor (0.9) and set variable
+        this->time_step = dt_critical * 0.9;
+
+        // Report
+        pcout << "  ------------------------------------------" << std::endl;
+        pcout << "  | AUTOMATIC TIME STEP SELECTION          |" << std::endl;
+        pcout << "  ------------------------------------------" << std::endl;
+        pcout << "  | Min Element Size (h): " << min_h_global << std::endl;
+        pcout << "  | Critical Limit:       " << dt_critical << std::endl;
+        pcout << "  | -> NEW Time Step:     " << this->time_step << " (Safety: 90%)" << std::endl;
+        pcout << "  ------------------------------------------" << std::endl;
+    }
+
+    /**
+     * @brief Executes the Explicit Newmark scheme (Central Difference).
+     * Parameters: Beta = 0.0, Gamma = 0.5
+     * Stability: Conditionally stable (CFL condition required).
+     * Cost: Very low per step (No linear solver).
+     */
+    template <int dim>
+    void WaveEquation<dim>::solve_EXPLICIT() {
+        pcout << "Starting Explicit Time Loop (Central Difference)..." << std::endl;
+
+        // --- SETUP ---
+        // 1. Prepare Lumped Mass (Inverse)
+        compute_lumped_mass_matrix(); // lumped_mass_matrix holds 1/M_ii
+
+        // 2. Vectors
+        // Owned vectors for calculations
+        TrilinosWrappers::MPI::Vector U_owned(locally_owned_dofs, mpi_communicator);
+        TrilinosWrappers::MPI::Vector V_owned(locally_owned_dofs, mpi_communicator);
+        TrilinosWrappers::MPI::Vector A_owned(locally_owned_dofs, mpi_communicator);
+        TrilinosWrappers::MPI::Vector F_ext(locally_owned_dofs, mpi_communicator);
+        TrilinosWrappers::MPI::Vector F_int(locally_owned_dofs, mpi_communicator); // K * U
+
+        unsigned int time_step_number = 0;
+
+        // Explicit parameters
+        beta = 0.0;
+        gamma = 0.5;
+
+        // --- TIME LOOP ---
+        while (time < final_time) {
+            time += time_step;
+            time_step_number++;
+
+            // 1. PREDICTOR STEP (Displacement)
+            // u_{n+1} = u_n + dt * v_n + (dt^2 / 2) * a_n
+            // --------------------------------------------------------
+
+            U_owned = U; // Start with u_n
+            U_owned.add(time_step, V); // + dt * v_n
+            U_owned.add(0.5 * time_step * time_step, A); // + 0.5 * dt^2 * a_n
+
+            // Apply Boundary Conditions to Displacement
+            std::map<types::global_dof_index, double> boundary_values;
+            boundary_function->set_time(time);
+            VectorTools::interpolate_boundary_values(dof_handler, 0, *boundary_function, boundary_values);
+
+            // Manually set boundary values
+            for (auto const& [dof_index, value] : boundary_values) {
+                if (locally_owned_dofs.is_element(dof_index)) {
+                    U_owned(dof_index) = value;
+                }
+            }
+
+            // Update Global U
+            U = U_owned;
+            constraints.distribute(U);
+
+
+            // 2. CALCULATE ACCELERATION
+            // M * a_{n+1} = F_ext_{n+1} - K * u_{n+1}
+            // --------------------------------------------------------
+
+            // a. External Force (F_ext)
+            initial_forcing_term->set_time(time);
+            VectorTools::create_right_hand_side(dof_handler, QGauss<dim>(fe.degree + 1),
+                                                *initial_forcing_term, F_ext);
+
+            // b. Internal Force (F_int = K * U)
+            // laplace_matrix is the stiffness matrix K
+            laplace_matrix.vmult(F_int, U);
+
+            // c. Residual (R = F_ext - F_int)
+            // Reusing A_owned to store the residual temporarily
+            A_owned = F_ext;
+            A_owned.add(-1.0, F_int);
+
+            // d. Solve for Acceleration (Diagonal Scaling)
+            // a_{n+1} = R / M_lumped
+            for (unsigned int i = 0; i < A_owned.local_size(); ++i) {
+                A_owned[i] *= lumped_mass_matrix[i];
+            }
+
+            // e. Apply Boundary Conditions to Acceleration
+            // For Dirichlet BCs (u = fixed), acceleration is 0.
+            for (auto const& [dof_index, value] : boundary_values) {
+                if (locally_owned_dofs.is_element(dof_index)) {
+                    A_owned(dof_index) = 0.0; // Enforce a=0 on fixed boundaries
+                }
+            }
+
+            // Update Global A
+            A = A_owned;
+            constraints.distribute(A);
+
+            // 3. CORRECTOR STEP (Velocity)
+            // v_{n+1} = v_n + dt * [ (1-gamma)*a_n + gamma*a_{n+1} ]
+            // Since gamma = 0.5: v_{n+1} = v_n + 0.5 * dt * (a_n + a_{n+1})
+            // --------------------------------------------------------
+
+            // 1. Predict Velocity (Half Step)
+            V.add(0.5 * time_step, A);
+
+            // 2. Predict Displacement (using V_half)
+            // U_{n+1} = U_n + dt * V_{half}
+            U_owned = U;
+            U_owned.add(time_step, V);
+
+            // BCs on U
+            boundary_function->set_time(time);
+            VectorTools::interpolate_boundary_values(dof_handler, 0, *boundary_function, boundary_values);
+            for (auto const& [dof_index, value] : boundary_values) {
+                if (locally_owned_dofs.is_element(dof_index)) U_owned(dof_index) = value;
+            }
+            U = U_owned;
+            constraints.distribute(U);
+
+            // 3. Compute new Acceleration
+            initial_forcing_term->set_time(time);
+            VectorTools::create_right_hand_side(dof_handler, QGauss<dim>(fe.degree + 1), *initial_forcing_term, F_ext);
+            laplace_matrix.vmult(F_int, U);
+
+            A_owned = F_ext;
+            A_owned.add(-1.0, F_int);
+
+            for (unsigned int i = 0; i < A_owned.local_size(); ++i) {
+                A_owned[i] *= lumped_mass_matrix[i];
+            }
+
+            // BCs on A
+            for (auto const& [dof_index, value] : boundary_values) {
+                if (locally_owned_dofs.is_element(dof_index)) A_owned(dof_index) = 0.0;
+            }
+            A = A_owned;
+            constraints.distribute(A);
+
+            // 4. Update Velocity (Full Step)
+            // V_{n+1} = V_{half} + 0.5 * dt * a_{n+1}
+            V.add(0.5 * time_step, A);
+
+            // --- OUTPUT ---
+            if (time_step_number % output_time_step == 0) {
+                output_results(time_step_number);
+            }
+        }
+        pcout << "Explicit simulation finished." << std::endl;
+    }
+
     // MAIN DRIVER
 
     /**
@@ -660,6 +883,7 @@ template <int dim>
         make_grid(); // Generate geometry
         setup_system(); // Distribute DoFs and init matrices
         assemble_matrices(); // Compute M and K (static)
+        if (method_type != IMPLICITO) {calculate_safe_time_step();} //Automate time-step selection based on mesh size
         solve_initial_conditions(); // Compute A0 consistent with U0, V0
 
         pcout << "Initial conditions computed. Starting simulation..." << std::endl;
@@ -668,11 +892,13 @@ template <int dim>
         output_results(0); 
 
         // --- SOLVER SELECTION ---
-        if (method_type == IMPLICITO) {
+        if (method_type == IMPLICIT) {
             solve_IMPLICITO();
+        } else if (method_type == EXPLICIT) {
+            solve_EXPLICIT();
         } else {
             // Placeholder for Phase 3 , we will implement the explicit solver later soon (nick be fast please)
-            pcout << "Explicit method not implemented yet!" << std::endl;
+            pcout << "Please select IMPLICIT or EXPLICIT as option" << std::endl;
         }
 
         pcout << "===========================================" << std::endl;

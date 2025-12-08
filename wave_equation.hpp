@@ -51,7 +51,7 @@ namespace WaveEquationProject {
      * - IMPLICIT: Unconditionally stable, requires linear solver (Newmark beta > 0).
      * - EXPLICIT: Conditionally stable (CFL), fast diagonal solve (Newmark beta = 0).
      */
-    enum TimeType { IMPLICITO, ESPLICITO };
+    enum TimeType { IMPLICIT, EXPLICIT };
 
     /**
      * Main class for the Parallel Wave Equation Solver.
