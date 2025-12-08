@@ -145,6 +145,11 @@ namespace WaveEquationProject {
          */
         void output_results(const unsigned int time_step);
 
+        void compute_lumped_mass_matrix();
+        void auto_check_cfl_condition();
+        void calculate_safe_time_step();
+        void solve_EXPLICIT();
+
         // MEMBER VARIABLES
 
         // --- MPI & Parallelism ---
