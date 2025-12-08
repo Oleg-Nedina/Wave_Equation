@@ -883,7 +883,7 @@ template <int dim>
         make_grid(); // Generate geometry
         setup_system(); // Distribute DoFs and init matrices
         assemble_matrices(); // Compute M and K (static)
-        if (method_type != IMPLICIT) {calculate_safe_time_step();} //Automate time-step selection based on mesh size
+        if (method_type != IMPLICIT) {auto_check_cfl_condition();} //Automate time-step selection based on mesh size
         solve_initial_conditions(); // Compute A0 consistent with U0, V0
 
         pcout << "Initial conditions computed. Starting simulation..." << std::endl;
