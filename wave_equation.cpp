@@ -130,7 +130,7 @@ namespace WaveEquationProject {
 
         //--- NEWMARK SCHEME PARAMETERS ---
         time = 0.0;
-        method_type = IMPLICITO; 
+        method_type = IMPLICIT;
 
         // Beta = 0.25, Gamma = 0.5 corresponds to the "Constant Average Acceleration" method.
         // It is unconditionally stable (A-stable) and second-order accurate.
@@ -883,7 +883,7 @@ template <int dim>
         make_grid(); // Generate geometry
         setup_system(); // Distribute DoFs and init matrices
         assemble_matrices(); // Compute M and K (static)
-        if (method_type != IMPLICITO) {calculate_safe_time_step();} //Automate time-step selection based on mesh size
+        if (method_type != IMPLICIT) {calculate_safe_time_step();} //Automate time-step selection based on mesh size
         solve_initial_conditions(); // Compute A0 consistent with U0, V0
 
         pcout << "Initial conditions computed. Starting simulation..." << std::endl;
