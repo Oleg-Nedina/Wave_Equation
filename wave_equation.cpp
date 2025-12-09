@@ -869,6 +869,20 @@ template <int dim>
                 output_results(time_step_number);
             }
         }
+        pcout << "Simulation loop finished." << std::endl;
+
+
+        // POST-PROCESSING (VERIFICATION)
+        // --------------------------------------------------------------------
+        // If running the manufactured solution scenario, check the L2 error
+        // to verify the implementation correctness.
+        if (scenario_id == 1) {
+            double error = compute_error_L2();
+            pcout << "========================================" << std::endl;
+            pcout << "CONVERGENCE CHECK (t=" << time << ")" << std::endl;
+            pcout << "L2 Error: " << error << std::endl;
+            pcout << "========================================" << std::endl;
+        }
         pcout << "Explicit simulation finished." << std::endl;
     }
 
