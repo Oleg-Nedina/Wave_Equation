@@ -130,7 +130,7 @@ namespace WaveEquationProject {
 
         //--- NEWMARK SCHEME PARAMETERS ---
         time = 0.0;
-        method_type = IMPLICIT;
+        method_type = EXPLICIT;
 
         // Beta = 0.25, Gamma = 0.5 corresponds to the "Constant Average Acceleration" method.
         // It is unconditionally stable (A-stable) and second-order accurate.
@@ -693,153 +693,6 @@ template <int dim>
         pcout << "  ------------------------------------------" << std::endl;
     }
 
-    /**
-     * @brief Executes the Explicit Newmark scheme (Central Difference).
-     * Parameters: Beta = 0.0, Gamma = 0.5
-     * Stability: Conditionally stable (CFL condition required).
-     * Cost: Very low per step (No linear solver).
-     */
-    template <int dim>
-    void WaveEquation<dim>::solve_EXPLICIT() {
-        pcout << "Starting Explicit Time Loop (Central Difference)..." << std::endl;
-
-        // --- SETUP ---
-        // 1. Prepare Lumped Mass (Inverse)
-        compute_lumped_mass_matrix(); // lumped_mass_matrix holds 1/M_ii
-
-        // 2. Vectors
-        // Owned vectors for calculations
-        TrilinosWrappers::MPI::Vector U_owned(locally_owned_dofs, mpi_communicator);
-        TrilinosWrappers::MPI::Vector V_owned(locally_owned_dofs, mpi_communicator);
-        TrilinosWrappers::MPI::Vector A_owned(locally_owned_dofs, mpi_communicator);
-        TrilinosWrappers::MPI::Vector F_ext(locally_owned_dofs, mpi_communicator);
-        TrilinosWrappers::MPI::Vector F_int(locally_owned_dofs, mpi_communicator); // K * U
-
-        unsigned int time_step_number = 0;
-
-        // Explicit parameters
-        beta = 0.0;
-        gamma = 0.5;
-
-        // --- TIME LOOP ---
-        while (time < final_time) {
-            time += time_step;
-            time_step_number++;
-
-            // 1. PREDICTOR STEP (Displacement)
-            // u_{n+1} = u_n + dt * v_n + (dt^2 / 2) * a_n
-            // --------------------------------------------------------
-
-            U_owned = U; // Start with u_n
-            U_owned.add(time_step, V); // + dt * v_n
-            U_owned.add(0.5 * time_step * time_step, A); // + 0.5 * dt^2 * a_n
-
-            // Apply Boundary Conditions to Displacement
-            std::map<types::global_dof_index, double> boundary_values;
-            boundary_function->set_time(time);
-            VectorTools::interpolate_boundary_values(dof_handler, 0, *boundary_function, boundary_values);
-
-            // Manually set boundary values
-            for (auto const& [dof_index, value] : boundary_values) {
-                if (locally_owned_dofs.is_element(dof_index)) {
-                    U_owned(dof_index) = value;
-                }
-            }
-
-            // Update Global U
-            U = U_owned;
-            constraints.distribute(U);
-
-
-            // 2. CALCULATE ACCELERATION
-            // M * a_{n+1} = F_ext_{n+1} - K * u_{n+1}
-            // --------------------------------------------------------
-
-            // a. External Force (F_ext)
-            initial_forcing_term->set_time(time);
-            VectorTools::create_right_hand_side(dof_handler, QGauss<dim>(fe.degree + 1),
-                                                *initial_forcing_term, F_ext);
-
-            // b. Internal Force (F_int = K * U)
-            // laplace_matrix is the stiffness matrix K
-            laplace_matrix.vmult(F_int, U);
-
-            // c. Residual (R = F_ext - F_int)
-            // Reusing A_owned to store the residual temporarily
-            A_owned = F_ext;
-            A_owned.add(-1.0, F_int);
-
-            // d. Solve for Acceleration (Diagonal Scaling)
-            // a_{n+1} = R / M_lumped
-            for (unsigned int i = 0; i < A_owned.local_size(); ++i) {
-                A_owned[i] *= lumped_mass_matrix[i];
-            }
-
-            // e. Apply Boundary Conditions to Acceleration
-            // For Dirichlet BCs (u = fixed), acceleration is 0.
-            for (auto const& [dof_index, value] : boundary_values) {
-                if (locally_owned_dofs.is_element(dof_index)) {
-                    A_owned(dof_index) = 0.0; // Enforce a=0 on fixed boundaries
-                }
-            }
-
-            // Update Global A
-            A = A_owned;
-            constraints.distribute(A);
-
-            // 3. CORRECTOR STEP (Velocity)
-            // v_{n+1} = v_n + dt * [ (1-gamma)*a_n + gamma*a_{n+1} ]
-            // Since gamma = 0.5: v_{n+1} = v_n + 0.5 * dt * (a_n + a_{n+1})
-            // --------------------------------------------------------
-
-            // 1. Predict Velocity (Half Step)
-            V.add(0.5 * time_step, A);
-
-            // 2. Predict Displacement (using V_half)
-            // U_{n+1} = U_n + dt * V_{half}
-            U_owned = U;
-            U_owned.add(time_step, V);
-
-            // BCs on U
-            boundary_function->set_time(time);
-            VectorTools::interpolate_boundary_values(dof_handler, 0, *boundary_function, boundary_values);
-            for (auto const& [dof_index, value] : boundary_values) {
-                if (locally_owned_dofs.is_element(dof_index)) U_owned(dof_index) = value;
-            }
-            U = U_owned;
-            constraints.distribute(U);
-
-            // 3. Compute new Acceleration
-            initial_forcing_term->set_time(time);
-            VectorTools::create_right_hand_side(dof_handler, QGauss<dim>(fe.degree + 1), *initial_forcing_term, F_ext);
-            laplace_matrix.vmult(F_int, U);
-
-            A_owned = F_ext;
-            A_owned.add(-1.0, F_int);
-
-            for (unsigned int i = 0; i < A_owned.local_size(); ++i) {
-                A_owned[i] *= lumped_mass_matrix[i];
-            }
-
-            // BCs on A
-            for (auto const& [dof_index, value] : boundary_values) {
-                if (locally_owned_dofs.is_element(dof_index)) A_owned(dof_index) = 0.0;
-            }
-            A = A_owned;
-            constraints.distribute(A);
-
-            // 4. Update Velocity (Full Step)
-            // V_{n+1} = V_{half} + 0.5 * dt * a_{n+1}
-            V.add(0.5 * time_step, A);
-
-            // --- OUTPUT ---
-            if (time_step_number % output_time_step == 0) {
-                output_results(time_step_number);
-            }
-        }
-        pcout << "Explicit simulation finished." << std::endl;
-    }
-
     // MAIN DRIVER
 
     /**
@@ -861,19 +714,19 @@ template <int dim>
         // --- OUTPUT DIRECTORY SETUP ---
         const std::string output_folder = "output_results";
 
-              
-              
+
+
         // Filesystem operations must be done by a single process to avoid race conditions.
         if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0) {
-           
+
            // Check if directory exists before creating it
             if (!std::filesystem::exists(output_folder)) {
                 std::filesystem::create_directories(output_folder);
             }
         }
 
-        // CRITICAL: All other processes must wait here until Rank 0 has finished 
-        // creating the directory. If we don't wait, Rank 1 might try to write 
+        // CRITICAL: All other processes must wait here until Rank 0 has finished
+        // creating the directory. If we don't wait, Rank 1 might try to write
         // a file to a non-existent folder, causing a crash.
         MPI_Barrier(mpi_communicator);
 
@@ -887,9 +740,9 @@ template <int dim>
         solve_initial_conditions(); // Compute A0 consistent with U0, V0
 
         pcout << "Initial conditions computed. Starting simulation..." << std::endl;
-       
+
         // Save the state at t=0
-        output_results(0); 
+        output_results(0);
 
         // --- SOLVER SELECTION ---
         if (method_type == IMPLICIT) {
@@ -906,8 +759,118 @@ template <int dim>
         pcout << "===========================================" << std::endl;
 
    }
-  
+
     // OUTPUT ROUTINES
+
+    /**
+     * @brief Executes the Explicit Newmark scheme (Central Difference).
+     * Parameters: Beta = 0.0, Gamma = 0.5
+     * Stability: Conditionally stable (CFL condition required).
+     * Cost: Very low per step (No linear solver).
+     */
+    template <int dim>
+    void WaveEquation<dim>::solve_EXPLICIT() {
+        pcout << "Starting Explicit Time Loop (Velocity Verlet)..." << std::endl;
+
+        // --- SETUP ---
+        compute_lumped_mass_matrix();
+
+        // Initialize Owned Vectors (Non-Ghosted) from System Vectors
+        TrilinosWrappers::MPI::Vector U_owned(locally_owned_dofs, mpi_communicator);
+        TrilinosWrappers::MPI::Vector V_owned(locally_owned_dofs, mpi_communicator);
+        TrilinosWrappers::MPI::Vector A_owned(locally_owned_dofs, mpi_communicator);
+        TrilinosWrappers::MPI::Vector F_ext(locally_owned_dofs, mpi_communicator);
+        TrilinosWrappers::MPI::Vector F_int(locally_owned_dofs, mpi_communicator);
+
+        // Sync initial state
+        U_owned = U;
+        V_owned = V;
+        A_owned = A;
+
+        unsigned int time_step_number = 0;
+
+        // --- TIME LOOP ---
+        while (time < final_time) {
+            time += time_step;
+            time_step_number++;
+
+            // --------------------------------------------------------
+            // 1. UPDATE VELOCITY (First Half-Step)
+            // v_{n+0.5} = v_n + 0.5 * dt * a_n
+            // --------------------------------------------------------
+            V_owned.add(0.5 * time_step, A_owned);
+
+            // --------------------------------------------------------
+            // 2. UPDATE DISPLACEMENT
+            // u_{n+1} = u_n + dt * v_{n+0.5}
+            // --------------------------------------------------------
+            U_owned.add(time_step, V_owned);
+
+            // Apply Boundary Conditions to U
+            std::map<types::global_dof_index, double> boundary_values;
+            boundary_function->set_time(time);
+            VectorTools::interpolate_boundary_values(dof_handler, 0, *boundary_function, boundary_values);
+
+            for (auto const& [dof_index, value] : boundary_values) {
+                if (locally_owned_dofs.is_element(dof_index)) {
+                    U_owned(dof_index) = value;
+                }
+            }
+
+            // Distribute U to Ghosted Vector (needed for Laplacian calculation)
+            U = U_owned;
+            constraints.distribute(U);
+
+            // --------------------------------------------------------
+            // 3. COMPUTE ACCELERATION (a_{n+1})
+            // M * a = F_ext - K * u
+            // --------------------------------------------------------
+
+            // External Force
+            initial_forcing_term->set_time(time);
+            VectorTools::create_right_hand_side(dof_handler, QGauss<dim>(fe.degree + 1),
+                                                *initial_forcing_term, F_ext);
+
+            // Internal Force (Stiffness * Displacement)
+            laplace_matrix.vmult(F_int, U); // Uses ghosted U
+
+            // Residual: R = F_ext - F_int
+            A_owned = F_ext;
+            A_owned.add(-1.0, F_int);
+
+            // Solve: a = M_lumped_inv * R
+            for (unsigned int i = 0; i < A_owned.local_size(); ++i) {
+                A_owned[i] *= lumped_mass_matrix[i];
+            }
+
+            // Apply BCs to Acceleration (0 on Dirichlet boundaries)
+            for (auto const& [dof_index, value] : boundary_values) {
+                if (locally_owned_dofs.is_element(dof_index)) {
+                    A_owned(dof_index) = 0.0;
+                }
+            }
+
+            // Distribute A (optional, but good for consistency)
+            A = A_owned;
+            constraints.distribute(A);
+
+            // --------------------------------------------------------
+            // 4. UPDATE VELOCITY (Second Half-Step)
+            // v_{n+1} = v_{n+0.5} + 0.5 * dt * a_{n+1}
+            // --------------------------------------------------------
+            V_owned.add(0.5 * time_step, A_owned);
+
+            // Update Global V
+            V = V_owned;
+            constraints.distribute(V);
+
+            // --- OUTPUT ---
+            if (time_step_number % output_time_step == 0) {
+                output_results(time_step_number);
+            }
+        }
+        pcout << "Explicit simulation finished." << std::endl;
+    }
 
     /**
      * @brief Writes the current solution state to disk.
@@ -930,7 +893,7 @@ template <int dim>
         data_out.add_data_vector(U, "displacement");
         data_out.add_data_vector(V, "velocity");
         data_out.add_data_vector(A, "acceleration");
-        
+
         // Attach Subdomain ID (useful to visualize MPI partitioning in Paraview)
         Vector<float> subdomain(triangulation.n_active_cells());
         for (unsigned int i = 0; i < subdomain.size(); ++i)
@@ -939,7 +902,7 @@ template <int dim>
 
         // Prepare the patches for writing
         data_out.build_patches();
-    
+
         // Write the parallel file structure.
         // 1st arg: Directory
         // 2nd arg: Base filename (deal.II appends _step.pvtu)

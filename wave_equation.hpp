@@ -147,7 +147,6 @@ namespace WaveEquationProject {
 
         void compute_lumped_mass_matrix();
         void auto_check_cfl_condition();
-        void calculate_safe_time_step();
         void solve_EXPLICIT();
 
         // MEMBER VARIABLES
