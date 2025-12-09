@@ -680,8 +680,8 @@ template <int dim>
         // CFL Limit: dt <= h / (c * sqrt(d))
         const double dt_critical = min_h_global / (wave_speed * std::sqrt(dim));
 
-        //Apply Safety Factor (0.9) and set variable
-        this->time_step = dt_critical * 0.9;
+        // Apply Safety Factor (0.5) to ensure stability
+        this->time_step = dt_critical * 0.5;
 
         // Report
         pcout << "  ------------------------------------------" << std::endl;
@@ -775,17 +775,37 @@ template <int dim>
         // --- SETUP ---
         compute_lumped_mass_matrix();
 
-        // Initialize Owned Vectors (Non-Ghosted) from System Vectors
+        // Initialize Owned Vectors
         TrilinosWrappers::MPI::Vector U_owned(locally_owned_dofs, mpi_communicator);
         TrilinosWrappers::MPI::Vector V_owned(locally_owned_dofs, mpi_communicator);
         TrilinosWrappers::MPI::Vector A_owned(locally_owned_dofs, mpi_communicator);
         TrilinosWrappers::MPI::Vector F_ext(locally_owned_dofs, mpi_communicator);
         TrilinosWrappers::MPI::Vector F_int(locally_owned_dofs, mpi_communicator);
 
-        // Sync initial state
+        // Sync initial state (U0 and V0)
         U_owned = U;
         V_owned = V;
-        A_owned = A;
+
+        // --- WARM START: RECOMPUTE A0 consistent with LUMPED MASS ---
+        // The previous 'A' was computed using the Consistent Mass Matrix.
+        // We must recompute it using M_lumped to avoid an initial kick.
+
+        // 1. Compute Forces at t=0
+        initial_forcing_term->set_time(time);
+        VectorTools::create_right_hand_side(dof_handler, QGauss<dim>(fe.degree + 1),
+                                            *initial_forcing_term, F_ext);
+        laplace_matrix.vmult(F_int, U); // K * U0
+
+        // 2. Solve M_lumped * A0 = F_ext - F_int
+        A_owned = F_ext;
+        A_owned.add(-1.0, F_int);
+        for (unsigned int i = 0; i < A_owned.local_size(); ++i) {
+            A_owned[i] *= lumped_mass_matrix[i];
+        }
+
+        // Save consistent A0
+        A = A_owned;
+        constraints.distribute(A);
 
         unsigned int time_step_number = 0;
 
@@ -794,16 +814,12 @@ template <int dim>
             time += time_step;
             time_step_number++;
 
-            // --------------------------------------------------------
             // 1. UPDATE VELOCITY (First Half-Step)
             // v_{n+0.5} = v_n + 0.5 * dt * a_n
-            // --------------------------------------------------------
             V_owned.add(0.5 * time_step, A_owned);
 
-            // --------------------------------------------------------
             // 2. UPDATE DISPLACEMENT
             // u_{n+1} = u_n + dt * v_{n+0.5}
-            // --------------------------------------------------------
             U_owned.add(time_step, V_owned);
 
             // Apply Boundary Conditions to U
@@ -817,50 +833,43 @@ template <int dim>
                 }
             }
 
-            // Distribute U to Ghosted Vector (needed for Laplacian calculation)
+            // Distribute U to Ghosted Vector
             U = U_owned;
             constraints.distribute(U);
 
-            // --------------------------------------------------------
             // 3. COMPUTE ACCELERATION (a_{n+1})
             // M * a = F_ext - K * u
-            // --------------------------------------------------------
 
             // External Force
             initial_forcing_term->set_time(time);
             VectorTools::create_right_hand_side(dof_handler, QGauss<dim>(fe.degree + 1),
                                                 *initial_forcing_term, F_ext);
 
-            // Internal Force (Stiffness * Displacement)
-            laplace_matrix.vmult(F_int, U); // Uses ghosted U
+            // Internal Force
+            laplace_matrix.vmult(F_int, U);
 
-            // Residual: R = F_ext - F_int
+            // Residual
             A_owned = F_ext;
             A_owned.add(-1.0, F_int);
 
-            // Solve: a = M_lumped_inv * R
+            // Solve Diagonal System
             for (unsigned int i = 0; i < A_owned.local_size(); ++i) {
                 A_owned[i] *= lumped_mass_matrix[i];
             }
 
-            // Apply BCs to Acceleration (0 on Dirichlet boundaries)
+            // Apply BCs to Acceleration (0 on fixed boundaries)
             for (auto const& [dof_index, value] : boundary_values) {
                 if (locally_owned_dofs.is_element(dof_index)) {
                     A_owned(dof_index) = 0.0;
                 }
             }
-
-            // Distribute A (optional, but good for consistency)
             A = A_owned;
             constraints.distribute(A);
 
-            // --------------------------------------------------------
             // 4. UPDATE VELOCITY (Second Half-Step)
             // v_{n+1} = v_{n+0.5} + 0.5 * dt * a_{n+1}
-            // --------------------------------------------------------
             V_owned.add(0.5 * time_step, A_owned);
 
-            // Update Global V
             V = V_owned;
             constraints.distribute(V);
 
@@ -869,13 +878,10 @@ template <int dim>
                 output_results(time_step_number);
             }
         }
-        pcout << "Simulation loop finished." << std::endl;
 
+        pcout << "Explicit simulation finished." << std::endl;
 
         // POST-PROCESSING (VERIFICATION)
-        // --------------------------------------------------------------------
-        // If running the manufactured solution scenario, check the L2 error
-        // to verify the implementation correctness.
         if (scenario_id == 1) {
             double error = compute_error_L2();
             pcout << "========================================" << std::endl;
@@ -883,7 +889,6 @@ template <int dim>
             pcout << "L2 Error: " << error << std::endl;
             pcout << "========================================" << std::endl;
         }
-        pcout << "Explicit simulation finished." << std::endl;
     }
 
     /**
