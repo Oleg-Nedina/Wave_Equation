@@ -8,6 +8,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake-common.cmake)
 add_executable(wave_solver
     main.cpp
     wave_equation.cpp
+    input_parser.cpp   
 )
 
 # Configurazione automatica di deal.II (include path, flags, link libs)

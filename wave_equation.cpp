@@ -1,10 +1,12 @@
 #include "./wave_equation.hpp"
-#include "test_cases.hpp" 
+#include "test_cases.hpp"
+#include "input_parser.hpp"
 
 // Necessary includes for grid generation, output, and file system operations
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/grid_out.h>
 #include <filesystem>
+#include <fstream>
 
 namespace WaveEquationProject {
 
@@ -34,7 +36,7 @@ namespace WaveEquationProject {
                         typename Triangulation<dim>::MeshSmoothing(
                             Triangulation<dim>::smoothing_on_refinement |
                             Triangulation<dim>::smoothing_on_coarsening)),
-         
+   
         // fe: Lagrangian Q1 elements (linear basis functions).
           fe(1), 
         // dof_handler: Manages the enumeration of Degrees of Freedom on the mesh.
@@ -43,27 +45,33 @@ namespace WaveEquationProject {
         // --- PARAMETER HANDLING ---
         // Ideally, we would read parameters from the .prm file here.
         // WE WILL IMPLEMENT THIS LATER. FOR NOW, WE SET DEFAULTS DIRECTLY.
-        ParameterHandler prm;
-        prm.enter_subsection("Global parameters");
-
-        // Suppress "unused parameter" warning (we will use this later).
-        (void)param_file;
-
-
-        // --- SIMULATION SETTINGS ---
-        // dt: Time step size. Critical for stability (Explicit) and accuracy (Implicit).
-        time_step = 0.01;
-
-
-        // T: Final simulation time.
-        final_time = 1.0;
-
-        // Output freq: 1 = save every step (smooth video), 10 = save every 10th step (save disk space).
-        output_time_step = 1;
-        prm.leave_subsection();
+     
         
-
-        // --- SCENARIO SELECTION ---
+    // --- 1. PARSING DEI PARAMETRI ---
+         InputParser parser;
+         parser.parse_parameters(param_file);
+    // --- 2. ASSEGNAZIONE PARAMETRI ALLA CLASSE ---
+         this->time_step        = parser.get_time_step();
+         this->final_time       = parser.get_final_time();
+         this->output_time_step = parser.get_output_frequency();
+         this->scenario_id      = parser.get_scenario_id();
+                                
+    // Gestione Solver Type (Stringa -> Enum)
+         std::string solver_str = parser.get_solver_type();
+         if (solver_str == "IMPLICIT") {
+                   this->method_type = IMPLICIT;
+         } else {
+                   this->method_type = EXPLICIT;
+         }
+         this->beta  = parser.get_beta();
+         this->gamma = parser.get_gamma();
+         pcout << "------------------------------------------" << std::endl;
+         pcout << "Parameters loaded from: " << param_file << std::endl;
+         pcout << "Method: " << solver_str << " | dt: " << time_step 
+               << " | T: " << final_time << " | Scenario: " << scenario_id << std::endl;
+         pcout << "------------------------------------------" << std::endl;
+    
+         // --- SCENARIO SELECTION ---
         // Change this ID to switch between tests (we will later read from prm file) 
         // 1: Verification (Sinusoidal)
         // 2: Gaussian Pulse
@@ -71,10 +79,6 @@ namespace WaveEquationProject {
         // 4: Raindrops
         // 5: Ring Implosion
        // 6: Time-Dependent BCs (Pumping Wall)
-        scenario_id = 1; //it will provide a convergence test
-
-
-
         // Strategy Pattern: We assign the correct Function object to the shared pointers.
         // The rest of the code is agnostic to which specific function is being used.
         if (scenario_id == 1) {
@@ -130,13 +134,7 @@ namespace WaveEquationProject {
 
         //--- NEWMARK SCHEME PARAMETERS ---
         time = 0.0;
-        method_type = EXPLICIT;
-
-        // Beta = 0.25, Gamma = 0.5 corresponds to the "Constant Average Acceleration" method.
-        // It is unconditionally stable (A-stable) and second-order accurate.
-        beta = 0.25;
-        gamma = 0.5;
-    }
+     }
 
 
     // GRID GENERATION
@@ -465,7 +463,7 @@ template <int dim>
      * * This method is unconditionally stable (A-stable) for beta=0.25, gamma=0.5.
      */
     template <int dim>
-    void WaveEquation<dim>::solve_IMPLICITO() {
+    void WaveEquation<dim>::solve_IMPLICIT() {
         pcout << "Starting Implicit Time Loop (Newmark-Beta)..." << std::endl;
 
         // 1. Build the system matrix (constant if dt is constant)
@@ -746,7 +744,7 @@ template <int dim>
 
         // --- SOLVER SELECTION ---
         if (method_type == IMPLICIT) {
-            solve_IMPLICITO();
+            solve_IMPLICIT();
         } else if (method_type == EXPLICIT) {
             solve_EXPLICIT();
         } else {
@@ -794,7 +792,7 @@ template <int dim>
         initial_forcing_term->set_time(time);
         VectorTools::create_right_hand_side(dof_handler, QGauss<dim>(fe.degree + 1),
                                             *initial_forcing_term, F_ext);
-        laplace_matrix.vmult(F_int, U); // K * U0
+        laplace_matrix.vmult(F_int , U_owned); // K * U0 , we need U_owned here cause U has ghosts and MPI do not like that
 
         // 2. Solve M_lumped * A0 = F_ext - F_int
         A_owned = F_ext;
@@ -802,6 +800,22 @@ template <int dim>
         for (unsigned int i = 0; i < A_owned.local_size(); ++i) {
             A_owned[i] *= lumped_mass_matrix[i];
         }
+        
+
+
+
+    //Forcing BCs on acceleration at t=0
+      /*  {
+        std::map<types::global_dof_index, double> boundary_values;
+        boundary_function->set_time(time);
+        VectorTools::interpolate_boundary_values(dof_handler, 0, *boundary_function, boundary_values);
+                    
+        for (auto const& [dof_index, value] : boundary_values) {
+        if (locally_owned_dofs.is_element(dof_index)) {
+                A_owned(dof_index) = 0.0;        
+            }
+         } 
+        } */
 
         // Save consistent A0
         A = A_owned;
@@ -846,7 +860,7 @@ template <int dim>
                                                 *initial_forcing_term, F_ext);
 
             // Internal Force
-            laplace_matrix.vmult(F_int, U);
+            laplace_matrix.vmult(F_int, U_owned); // K * u_{n+1}
 
             // Residual
             A_owned = F_ext;
@@ -863,6 +877,25 @@ template <int dim>
                     A_owned(dof_index) = 0.0;
                 }
             }
+
+
+        /*
+        {
+                            
+        std::map<types::global_dof_index, double> boundary_values;
+        boundary_function->set_time(time);
+        VectorTools::interpolate_boundary_values(dof_handler, 0, *boundary_function, boundary_values);
+            for (auto const& [dof_index, value] : boundary_values) {
+                if (locally_owned_dofs.is_element(dof_index)) {
+                
+                    A_owned(dof_index) = 0.0;
+                    
+                }
+            }
+        }
+        */
+        
+
             A = A_owned;
             constraints.distribute(A);
 

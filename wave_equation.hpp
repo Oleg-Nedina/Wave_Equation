@@ -106,11 +106,6 @@ namespace WaveEquationProject {
          */
         void assemble_matrix_IMPLICITO(); 
 
-        /**
-         * (Placeholder) Builds the lumped mass matrix for the Explicit scheme.
-         */
-        void assemble_matrix_ESPLICITO();
-
         // SOLVERS & ALGORITHMS
 
         /**
@@ -131,13 +126,7 @@ namespace WaveEquationProject {
          * Executes the Implicit Time Stepping Loop (Newmark-beta).
          * Includes prediction, linear solve (CG + AMG), and correction.
          */
-        void solve_IMPLICITO(); 
-
-        /**
-         * (Placeholder) Executes the Explicit Time Stepping Loop.
-         * Uses Mass Lumping for fast inversion.
-         */
-        void solve_ESPLICITO(); 
+        void solve_IMPLICIT(); 
 
         /**
          * Outputs the solution in .vtu/.pvtu format for ParaView.
