@@ -6,6 +6,9 @@ The executable `wave_solver` accepts command-line arguments to select the dimens
 mpirun -n <N_PROCS> ./wave_solver [DIMENSION] [PARAM_FILE]
 ```
 
+./wave_solver ../include/parameters.prm
+
+
 ### Examples:
 **Run in 2D (Default):**
 ```bash

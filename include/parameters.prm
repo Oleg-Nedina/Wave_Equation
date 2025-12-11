@@ -1,0 +1,36 @@
+# ==========================================================
+#  Parameter File for Wave Equation Solver
+# ==========================================================
+
+subsection Time Settings
+
+    set Time step        = 0.005
+
+    set Final time       = 2.0
+
+    set Output frequency = 1
+    end
+
+
+    subsection Scenario
+    # 1 = Manufactured Solution (Convergence Test)
+    # 2 = Gaussian Pulse Propagation (Default)
+    # 3 = Double Gaussian Collision
+    # 4 = Raindrops (Sorgenti casuali)
+    # 5 = Ring Implosion
+    # 6 = Moving Wall (Condizione al contorno variabile nel tempo)
+    set Scenario ID      = 4
+    end
+
+
+    subsection Solver Settings
+    # Metodo di integrazione temporale
+    # Per integrazione esplicita, questi parametri non sono usati.:
+    # valid option: IMPLICIT | EXPLICIT
+    set Method           = IMPLICIT
+
+   #  Newmark-Beta prm (Use only for IMPLICIT)
+   # for inconditional stabaility: Beta=0.25, Gamma=0.5
+   set Newmark Beta     = 0.25
+   set Newmark Gamma    = 0.5
+   end
