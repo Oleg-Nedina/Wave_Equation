@@ -770,151 +770,160 @@ template <int dim>
     void WaveEquation<dim>::solve_EXPLICIT() {
         pcout << "Starting Explicit Time Loop (Velocity Verlet)..." << std::endl;
 
-        // --- SETUP ---
+        // --- 1. SETUP & MASS LUMPING ---
+        // Compute M_lumped (diagonal) and its inverse for fast inversion.
         compute_lumped_mass_matrix();
 
-        // Initialize Owned Vectors
+        // Initialize "Owned" Vectors (Non-ghosted, fully distributed for algebra)
         TrilinosWrappers::MPI::Vector U_owned(locally_owned_dofs, mpi_communicator);
         TrilinosWrappers::MPI::Vector V_owned(locally_owned_dofs, mpi_communicator);
         TrilinosWrappers::MPI::Vector A_owned(locally_owned_dofs, mpi_communicator);
         TrilinosWrappers::MPI::Vector F_ext(locally_owned_dofs, mpi_communicator);
         TrilinosWrappers::MPI::Vector F_int(locally_owned_dofs, mpi_communicator);
 
-        // Sync initial state (U0 and V0)
+        // Copy initial conditions to owned vectors
         U_owned = U;
         V_owned = V;
 
-        // --- WARM START: RECOMPUTE A0 consistent with LUMPED MASS ---
-        // The previous 'A' was computed using the Consistent Mass Matrix.
-        // We must recompute it using M_lumped to avoid an initial kick.
+        // --- 2. COMPUTE A0 (CONSISTENT WITH LUMPED MASS) ---
+        // Compute A0 = M_lumped^-1 * (F_ext - K*U0).
 
-        // 1. Compute Forces at t=0
+        // Calculate Internal Force: F_int = K * U0
+        laplace_matrix.vmult(F_int, U_owned);
+
+        // Calculate External Force: F_ext = F(0)
         initial_forcing_term->set_time(time);
         VectorTools::create_right_hand_side(dof_handler, QGauss<dim>(fe.degree + 1),
                                             *initial_forcing_term, F_ext);
-        laplace_matrix.vmult(F_int , U_owned); // K * U0 , we need U_owned here cause U has ghosts and MPI do not like that
 
-        // 2. Solve M_lumped * A0 = F_ext - F_int
+        // Solve: A0 = M_inv * (F_ext - F_int)
         A_owned = F_ext;
         A_owned.add(-1.0, F_int);
+
+        // Apply Lumped Mass Inverse (Element-wise multiplication)
         for (unsigned int i = 0; i < A_owned.local_size(); ++i) {
             A_owned[i] *= lumped_mass_matrix[i];
         }
-        
 
-
-
-    //Forcing BCs on acceleration at t=0
-      /*  {
-        std::map<types::global_dof_index, double> boundary_values;
-        boundary_function->set_time(time);
-        VectorTools::interpolate_boundary_values(dof_handler, 0, *boundary_function, boundary_values);
-                    
-        for (auto const& [dof_index, value] : boundary_values) {
-        if (locally_owned_dofs.is_element(dof_index)) {
-                A_owned(dof_index) = 0.0;        
+        // Apply BCs to Acceleration (Fixed boundaries have a=0)
+        // This prevents noise from the boundary creeping in.
+        {
+            std::map<types::global_dof_index, double> boundary_values;
+            boundary_function->set_time(time);
+            VectorTools::interpolate_boundary_values(dof_handler, 0, *boundary_function, boundary_values);
+            for (auto const& [dof_index, value] : boundary_values) {
+                if (locally_owned_dofs.is_element(dof_index)) {
+                    A_owned(dof_index) = 0.0;
+                }
             }
-         } 
-        } */
+        }
 
-        // Save consistent A0
+        // Sync A0 to ghosted vector for output
         A = A_owned;
-        constraints.distribute(A);
+
+        // Output initial state (t=0) with corrected A0
+        output_results(0);
 
         unsigned int time_step_number = 0;
 
-        // --- TIME LOOP ---
+        // --- 3. TIME LOOP ---
         while (time < final_time) {
             time += time_step;
             time_step_number++;
 
-            // 1. UPDATE VELOCITY (First Half-Step)
+            // --------------------------------------------------------
+            // STEP 1: PREDICTOR (First Half-Step)
             // v_{n+0.5} = v_n + 0.5 * dt * a_n
+            // u_{n+1}   = u_n + dt * v_{n+0.5}
+            // --------------------------------------------------------
+
+            // V_owned += 0.5 * dt * A_owned
             V_owned.add(0.5 * time_step, A_owned);
 
-            // 2. UPDATE DISPLACEMENT
-            // u_{n+1} = u_n + dt * v_{n+0.5}
+            // U_owned += dt * V_owned (using the updated V_owned)
             U_owned.add(time_step, V_owned);
 
-            // Apply Boundary Conditions to U
-            std::map<types::global_dof_index, double> boundary_values;
-            boundary_function->set_time(time);
-            VectorTools::interpolate_boundary_values(dof_handler, 0, *boundary_function, boundary_values);
+            // Apply Dirichlet BCs to U_{n+1}
+            {
+                std::map<types::global_dof_index, double> boundary_values;
+                boundary_function->set_time(time);
+                VectorTools::interpolate_boundary_values(dof_handler, 0, *boundary_function, boundary_values);
 
-            for (auto const& [dof_index, value] : boundary_values) {
-                if (locally_owned_dofs.is_element(dof_index)) {
-                    U_owned(dof_index) = value;
+                for (auto const& [dof_index, value] : boundary_values) {
+                    if (locally_owned_dofs.is_element(dof_index)) {
+                        U_owned(dof_index) = value;
+                    }
                 }
             }
 
-            // Distribute U to Ghosted Vector
+            // --- SYNC GHOSTS FOR U ---
             U = U_owned;
+
+            // Apply hanging node constraints (if any)
             constraints.distribute(U);
 
-            // 3. COMPUTE ACCELERATION (a_{n+1})
-            // M * a = F_ext - K * u
 
-            // External Force
+            // --------------------------------------------------------
+            // STEP 2: COMPUTE FORCES AND ACCELERATION
+            // a_{n+1} = M_inv * ( F_ext_{n+1} - K * u_{n+1} )
+            // --------------------------------------------------------
+
+            // External Force F(t_{n+1})
             initial_forcing_term->set_time(time);
             VectorTools::create_right_hand_side(dof_handler, QGauss<dim>(fe.degree + 1),
                                                 *initial_forcing_term, F_ext);
 
-            // Internal Force
-            laplace_matrix.vmult(F_int, U_owned); // K * u_{n+1}
+            // Internal Force K * U_{n+1}
+            laplace_matrix.vmult(F_int, U_owned);
 
-            // Residual
+            // Residual: R = F_ext - F_int
             A_owned = F_ext;
             A_owned.add(-1.0, F_int);
 
-            // Solve Diagonal System
+            // Solve M * a = R  =>  a = M_inv * R
             for (unsigned int i = 0; i < A_owned.local_size(); ++i) {
                 A_owned[i] *= lumped_mass_matrix[i];
             }
 
-            // Apply BCs to Acceleration (0 on fixed boundaries)
-            for (auto const& [dof_index, value] : boundary_values) {
-                if (locally_owned_dofs.is_element(dof_index)) {
-                    A_owned(dof_index) = 0.0;
+            // Apply BCs to Acceleration
+            {
+                std::map<types::global_dof_index, double> boundary_values;
+                boundary_function->set_time(time);
+                VectorTools::interpolate_boundary_values(dof_handler, 0, *boundary_function, boundary_values);
+                for (auto const& [dof_index, value] : boundary_values) {
+                    if (locally_owned_dofs.is_element(dof_index)) {
+                        A_owned(dof_index) = 0.0;
+                    }
                 }
             }
 
-
-        /*
-        {
-                            
-        std::map<types::global_dof_index, double> boundary_values;
-        boundary_function->set_time(time);
-        VectorTools::interpolate_boundary_values(dof_handler, 0, *boundary_function, boundary_values);
-            for (auto const& [dof_index, value] : boundary_values) {
-                if (locally_owned_dofs.is_element(dof_index)) {
-                
-                    A_owned(dof_index) = 0.0;
-                    
-                }
-            }
-        }
-        */
-        
-
+            // --- SYNC GHOSTS FOR A ---
             A = A_owned;
-            constraints.distribute(A);
 
-            // 4. UPDATE VELOCITY (Second Half-Step)
+
+            // --------------------------------------------------------
+            // STEP 3: CORRECTOR (Second Half-Step)
             // v_{n+1} = v_{n+0.5} + 0.5 * dt * a_{n+1}
+            // --------------------------------------------------------
+
             V_owned.add(0.5 * time_step, A_owned);
 
+            // --- SYNC GHOSTS FOR V ---
             V = V_owned;
-            constraints.distribute(V);
 
-            // --- OUTPUT ---
+
+            // --------------------------------------------------------
+            // OUTPUT
+            // --------------------------------------------------------
             if (time_step_number % output_time_step == 0) {
+                // pcout << "Outputting Step " << time_step_number << std::endl;
                 output_results(time_step_number);
             }
         }
 
         pcout << "Explicit simulation finished." << std::endl;
 
-        // POST-PROCESSING (VERIFICATION)
+        // VERIFICATION
         if (scenario_id == 1) {
             double error = compute_error_L2();
             pcout << "========================================" << std::endl;
