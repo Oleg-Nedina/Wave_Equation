@@ -763,14 +763,14 @@ template <int dim>
         output_results(0);
 
         // --- SOLVER SELECTION ---
-        if (method_type == IMPLICIT) {
-            solve_IMPLICIT();
-        } else if (method_type == EXPLICIT) {
+        //if (method_type == IMPLICIT) {
+        //    solve_IMPLICIT();
+        //} else if (method_type == EXPLICIT) {
             solve_EXPLICIT();
-        } else {
+        //} else {
             // Placeholder for Phase 3 , we will implement the explicit solver later soon (nick be fast please)
-            pcout << "Please select IMPLICIT or EXPLICIT as option" << std::endl;
-        }
+        //    pcout << "Please select IMPLICIT or EXPLICIT as option" << std::endl;
+        //}
 
         pcout << "===========================================" << std::endl;
         pcout << "   SIMULATION COMPLETED " << std::endl;

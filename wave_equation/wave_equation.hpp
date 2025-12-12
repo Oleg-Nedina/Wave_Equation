@@ -136,7 +136,7 @@ namespace WaveEquationProject {
 
         void compute_lumped_mass_matrix();
         void auto_check_cfl_condition();
-        void force_ghost_sync();
+        void force_ghost_sync(const TrilinosWrappers::MPI::Vector &source_owned, TrilinosWrappers::MPI::Vector &destination_ghosted);
         void solve_EXPLICIT();
 
         // MEMBER VARIABLES
