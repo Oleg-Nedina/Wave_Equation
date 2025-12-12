@@ -691,6 +691,26 @@ template <int dim>
         pcout << "  ------------------------------------------" << std::endl;
     }
 
+    /**
+     *
+     * @brief Forces the sync of ghost vector
+     */
+    template <int dim>
+    void WaveEquation<dim>::force_ghost_sync(const TrilinosWrappers::MPI::Vector &source_owned,
+                                             TrilinosWrappers::MPI::Vector &destination_ghosted) {
+        // 1. Copy locally owned data
+        destination_ghosted = source_owned;
+
+        // 2. Explicitly compress/exchange if the assignment didn't do it
+        // Note: This relies on the vector being in a state where it accepts updates.
+        // For Trilinos, if operator= fails, we can try re-initializing or simple assignment.
+        // But if assignment failed, we check checking constraints distribution.
+
+        // 3. Ensure constraints (Periodic BCs / Hanging nodes) are applied
+        // This often forces a communication of the constrained DoFs at least.
+        constraints.distribute(destination_ghosted);
+    }
+
     // MAIN DRIVER
 
     /**
@@ -819,7 +839,7 @@ template <int dim>
         }
 
         // Sync A0 to ghosted vector for output
-        A = A_owned;
+        force_ghost_sync(A_owned, A);
 
         // Output initial state (t=0) with corrected A0
         output_results(0);
@@ -857,7 +877,7 @@ template <int dim>
             }
 
             // --- SYNC GHOSTS FOR U ---
-            U = U_owned;
+            force_ghost_sync(U_owned, U);
 
             // Apply hanging node constraints (if any)
             constraints.distribute(U);
@@ -898,7 +918,7 @@ template <int dim>
             }
 
             // --- SYNC GHOSTS FOR A ---
-            A = A_owned;
+            force_ghost_sync(A_owned, A);
 
 
             // --------------------------------------------------------
@@ -909,7 +929,7 @@ template <int dim>
             V_owned.add(0.5 * time_step, A_owned);
 
             // --- SYNC GHOSTS FOR V ---
-            V = V_owned;
+            force_ghost_sync(V_owned, V);
 
 
             // --------------------------------------------------------

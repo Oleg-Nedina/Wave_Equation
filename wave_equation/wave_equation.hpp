@@ -136,6 +136,7 @@ namespace WaveEquationProject {
 
         void compute_lumped_mass_matrix();
         void auto_check_cfl_condition();
+        void force_ghost_sync();
         void solve_EXPLICIT();
 
         // MEMBER VARIABLES
