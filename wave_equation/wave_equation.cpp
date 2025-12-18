@@ -168,17 +168,29 @@ template <int dim> void WaveEquation<dim>::make_grid() {
 // ERROR ANALYSIS
 
 template <int dim> double WaveEquation<dim>::compute_energy() const {
-  TrilinosWrappers::MPI::Vector MV(locally_owned_dofs, mpi_communicator);
-  mass_matrix.vmult(MV, V);
-  const double kinetic = 0.5 * (V * MV);
+  // Create owned copies with the same map as the matrices
+  TrilinosWrappers::MPI::Vector U_owned(locally_owned_dofs, mpi_communicator);
+  TrilinosWrappers::MPI::Vector V_owned(locally_owned_dofs, mpi_communicator);
 
+  U_owned = U; // copy owned part from ghosted
+  V_owned = V;
+
+  // (optional but safe)
+  U_owned.compress(VectorOperation::insert);
+  V_owned.compress(VectorOperation::insert);
+
+  // Kinetic: 1/2 v^T M v
+  TrilinosWrappers::MPI::Vector MV(locally_owned_dofs, mpi_communicator);
+  mass_matrix.vmult(MV, V_owned);
+  const double kinetic = 0.5 * (V_owned * MV);
+
+  // Potential: 1/2 u^T K u
   TrilinosWrappers::MPI::Vector KU(locally_owned_dofs, mpi_communicator);
-  laplace_matrix.vmult(KU, U);
-  const double potential = 0.5 * (U * KU);
+  laplace_matrix.vmult(KU, U_owned);
+  const double potential = 0.5 * (U_owned * KU);
 
   return kinetic + potential;
 }
-
 //
 /**
  * @brief Computes the L2 error norm against the exact solution.

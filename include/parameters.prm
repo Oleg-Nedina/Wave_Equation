@@ -19,7 +19,7 @@ subsection Time Settings
     # 4 = Raindrops (Sorgenti casuali)
     # 5 = Ring Implosion
     # 6 = Moving Wall (Condizione al contorno variabile nel tempo)
-    set Scenario ID      = 6
+    set Scenario ID      = 1
     end
 
 
