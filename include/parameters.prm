@@ -6,7 +6,7 @@ subsection Time Settings
 
     set Time step        = 0.005
 
-    set Final time       = 2.0
+    set Final time       = 1.0
 
     set Output frequency = 1
     end
@@ -19,7 +19,7 @@ subsection Time Settings
     # 4 = Raindrops (Sorgenti casuali)
     # 5 = Ring Implosion
     # 6 = Moving Wall (Condizione al contorno variabile nel tempo)
-    set Scenario ID      = 4
+    set Scenario ID      = 1
     end
 
 
@@ -27,7 +27,7 @@ subsection Time Settings
     # Metodo di integrazione temporale
     # Per integrazione esplicita, questi parametri non sono usati.:
     # valid option: IMPLICIT | EXPLICIT
-    set Method           = IMPLICIT
+    set Method           = EXPLICIT
 
    #  Newmark-Beta prm (Use only for IMPLICIT)
    # for inconditional stabaility: Beta=0.25, Gamma=0.5
