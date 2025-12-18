@@ -134,8 +134,8 @@ WaveEquation<dim>::WaveEquation(const std::string &param_file)
   //--- NEWMARK SCHEME PARAMETERS ---
   time = 0.0;
 }
-
-// GRID GENERATION
+// ENERGY  Ch
+//  GRID GENERATION
 
 /**
  * @brief Generates the computational domain.
@@ -167,6 +167,19 @@ template <int dim> void WaveEquation<dim>::make_grid() {
 
 // ERROR ANALYSIS
 
+template <int dim> double WaveEquation<dim>::compute_energy() const {
+  TrilinosWrappers::MPI::Vector MV(locally_owned_dofs, mpi_communicator);
+  mass_matrix.vmult(MV, V);
+  const double kinetic = 0.5 * (V * MV);
+
+  TrilinosWrappers::MPI::Vector KU(locally_owned_dofs, mpi_communicator);
+  laplace_matrix.vmult(KU, U);
+  const double potential = 0.5 * (U * KU);
+
+  return kinetic + potential;
+}
+
+//
 /**
  * @brief Computes the L2 error norm against the exact solution.
  * E = || u_h - u_ex ||_L2
@@ -757,6 +770,22 @@ template <int dim> void WaveEquation<dim>::run() {
 
   pcout << "Initial conditions computed. Starting simulation..." << std::endl;
 
+  const std::string energy_folder = "output_energy";
+
+  if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0) {
+    if (!std::filesystem::exists(energy_folder))
+      std::filesystem::create_directories(energy_folder);
+  }
+
+  MPI_Barrier(mpi_communicator);
+
+  if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0) {
+    std::ofstream energy_file("output_energy/energy.csv"); // truncate
+    energy_file << "t,E\n";
+  }
+  MPI_Barrier(mpi_communicator);
+  //
+
   // Save the state at t=0
   output_results(0);
 
@@ -815,9 +844,9 @@ template <int dim> void WaveEquation<dim>::solve_EXPLICIT() {
   A_owned.add(-1.0, F_int);
 
   // Apply Lumped Mass Inverse (Element-wise multiplication)
-  for (unsigned int i = 0; i < A_owned.local_size(); ++i) {
-    A_owned[i] *= lumped_mass_matrix[i];
-  }
+  const auto range0 = A_owned.local_range();
+  for (auto i = range0.first; i < range0.second; ++i)
+    A_owned(i) *= lumped_mass_matrix(i);
 
   // Apply BCs to Acceleration (Fixed boundaries have a=0)
   // This prevents noise from the boundary creeping in.
@@ -835,7 +864,9 @@ template <int dim> void WaveEquation<dim>::solve_EXPLICIT() {
 
   // Sync A0 to ghosted vector for output
   force_ghost_sync(A_owned, A);
-
+  force_ghost_sync(U_owned, U);
+  force_ghost_sync(V_owned, V);
+  force_ghost_sync(A_owned, A);
   // Output initial state (t=0) with corrected A0
   output_results(0);
 
@@ -872,11 +903,11 @@ template <int dim> void WaveEquation<dim>::solve_EXPLICIT() {
       }
     }
 
-    // --- SYNC GHOSTS FOR U ---
-    force_ghost_sync(U_owned, U);
-
     // Apply hanging node constraints (if any)
     constraints.distribute(U);
+
+    // --- SYNC GHOSTS FOR U ---
+    force_ghost_sync(U_owned, U);
 
     // --------------------------------------------------------
     // STEP 2: COMPUTE FORCES AND ACCELERATION
@@ -887,6 +918,7 @@ template <int dim> void WaveEquation<dim>::solve_EXPLICIT() {
     initial_forcing_term->set_time(time);
     VectorTools::create_right_hand_side(dof_handler, QGauss<dim>(fe.degree + 1),
                                         *initial_forcing_term, F_ext);
+    F_ext.compress(VectorOperation::add); // <-- AGGIUNGI QUESTA RIGA
 
     // Internal Force K * U_{n+1}
     laplace_matrix.vmult(F_int, U_owned);
@@ -959,30 +991,35 @@ template <int dim>
 void WaveEquation<dim>::output_results(const unsigned int step) {
   TimerOutput::Scope t(computing_timer, "Output");
 
+  // 1) Ensure ghost values are valid BEFORE DataOut reads them
+  U.update_ghost_values();
+  V.update_ghost_values();
+  A.update_ghost_values(); // anche se non serve per energia, serve per output
+                           // acceleration
+
   DataOut<dim> data_out;
   data_out.attach_dof_handler(dof_handler);
 
-  // Attach the solution vectors.
-  // Note: These must be ghosted vectors (locally_relevant) to allow
-  // DataOut to access values on the boundary of the processor's subdomain.
   data_out.add_data_vector(U, "displacement");
   data_out.add_data_vector(V, "velocity");
   data_out.add_data_vector(A, "acceleration");
 
-  // Attach Subdomain ID (useful to visualize MPI partitioning in Paraview)
   Vector<float> subdomain(triangulation.n_active_cells());
   for (unsigned int i = 0; i < subdomain.size(); ++i)
     subdomain(i) = triangulation.locally_owned_subdomain();
   data_out.add_data_vector(subdomain, "subdomain");
 
-  // Prepare the patches for writing
   data_out.build_patches();
 
-  // Write the parallel file structure.
-  // 1st arg: Directory
-  // 2nd arg: Base filename (deal.II appends _step.pvtu)
   data_out.write_vtu_with_pvtu_record("output_results/", "solution", step,
                                       mpi_communicator);
+
+  // 2) Energy logging (rank 0 only)
+  const double E = compute_energy();
+  if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0) {
+    static std::ofstream energy_file("output_energy/energy.csv", std::ios::app);
+    energy_file << time << "," << E << "\n";
+  }
 }
 
 // --- TEMPLATE INSTANTIATION ---
