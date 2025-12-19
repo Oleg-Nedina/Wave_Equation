@@ -103,15 +103,21 @@ The repository is organized to clearly separate source code, configuration files
 .
 ├── CMakeLists.txt          # Build configuration
 ├── cmake-common.cmake      # Shared CMake settings
-├── main.cpp                # Entry point (MPI initialization & argument parsing)
-├── include/
-│   ├── wave_equation.hpp   # Solver class declaration & documentation
-│   ├── wave_equation.cpp   # Numerical scheme implementation
-│   └── parameters.prm      # Runtime configuration file
+├── main.cpp                # Entry point
 ├── plot_energy.py          # Post-processing and energy plots
-├── repos/                  # Mathematical formulation and notes
-└── build/                  # Build directory (not versioned)
+├── README.md               # Documentation
+├── include/                # Configuration and helpers
+│   ├── input_parser.cpp    # Parameter parsing implementation
+│   ├── input_parser.hpp    # Parameter parsing header
+│   ├── parameters.prm      # Runtime configuration file
+│   └── test_cases.hpp      # Test cases definitions
+├── wave_equation/          # Core solver logic
+│   ├── wave_equation.cpp   # Numerical scheme implementation
+│   └── wave_equation.hpp   # Solver class declaration
+└── repos/                  # Reports and references
+    └── report_finale_pde_parziale.pdf
 
+─ build/                  # Build directory (not versioned)
 ```
 
 ## Output and Visualization
