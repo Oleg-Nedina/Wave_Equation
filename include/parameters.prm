@@ -6,7 +6,7 @@ subsection Time Settings
 
     set Time step        = 0.005
 
-    set Final time       = 1.0
+    set Final time       = 2.0
 
     set Output frequency = 1
     end
@@ -19,7 +19,7 @@ subsection Time Settings
     # 4 = Raindrops (Sorgenti casuali)
     # 5 = Ring Implosion
     # 6 = Moving Wall (Condizione al contorno variabile nel tempo)
-    set Scenario ID      = 1
+    set Scenario ID      = 6
     end
 
 
