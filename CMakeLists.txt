@@ -1,7 +1,19 @@
 cmake_minimum_required(VERSION 3.12.0)
-project(project_title LANGUAGES CXX C)
+project(wave_equation_solver LANGUAGES CXX C)
 
-include(../common/cmake-common.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake-common.cmake)
 
-add_executable(lab-01 src/lab-01.cpp src/Poisson1D.cpp)
-deal_ii_setup_target(lab-01)
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/wave_equation
+)
+
+add_executable(wave_solver
+    main.cpp                          
+    wave_equation/wave_equation.cpp  
+    include/input_parser.cpp       
+)
+
+deal_ii_setup_target(wave_solver)
+
+target_link_libraries(wave_solver MPI::MPI_CXX)
