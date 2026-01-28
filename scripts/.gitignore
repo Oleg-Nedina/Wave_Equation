@@ -1,0 +1,20 @@
+# --- Build & Binary ---
+build/
+*.o
+*.so
+
+# --- Output Data ---
+output_results/
+output_energy/
+*.vtu
+*.pvtu
+*.csv
+
+# --- Plots & Images ---
+*.png
+
+# --- Temporary Files ---
+include/parameters_temp.prm
+__pycache__/
+.DS_Store
+.vscode/
