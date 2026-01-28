@@ -12,6 +12,7 @@ output_energy/
 
 # --- Plots & Images ---
 *.png
+scripts/*.png
 
 # --- Temporary Files ---
 include/parameters_temp.prm
