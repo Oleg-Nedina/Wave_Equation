@@ -3,34 +3,31 @@
 # ==========================================================
 
 subsection Time Settings
-
-    set Time step        = 0.005
-
-    set Final time       = 2.0
-
+    set Time step        = 0.0
+    set Final time       = 3.0
     set Output frequency = 1
-    end
+end
 
-
-    subsection Scenario
+subsection Scenario
     # 1 = Manufactured Solution (Convergence Test)
-    # 2 = Gaussian Pulse Propagation (Default)
+    # 2 = Gaussian Pulse Propagation
     # 3 = Double Gaussian Collision
-    # 4 = Raindrops (Sorgenti casuali)
+    # 4 = Raindrops
     # 5 = Ring Implosion
-    # 6 = Moving Wall (Condizione al contorno variabile nel tempo)
-    set Scenario ID      = 1
-    end
+    # 6 = Moving Wall
+    set Scenario ID      = 6
 
+    # Refinement Level must be INSIDE this subsection
+    # 6 = Coarse (for testing), 8 = Fine (for cluster)
+    set Refinement level = 6
+end
 
-    subsection Solver Settings
-    # Metodo di integrazione temporale
-    # Per integrazione esplicita, questi parametri non sono usati.:
-    # valid option: IMPLICIT | EXPLICIT
+subsection Solver Settings
+    # valid options: IMPLICIT | EXPLICIT
     set Method           = IMPLICIT
 
-   #  Newmark-Beta prm (Use only for IMPLICIT)
-   # for inconditional stabaility: Beta=0.25, Gamma=0.5
-   set Newmark Beta     = 0.25
-   set Newmark Gamma    = 0.5
-   end
+    # Newmark-Beta (Only for IMPLICIT)
+    # Unconditionally stable: Beta=0.25, Gamma=0.5
+    set Newmark Beta     = 0.25
+    set Newmark Gamma    = 0.5
+end

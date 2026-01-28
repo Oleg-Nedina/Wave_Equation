@@ -10,6 +10,39 @@
 
 namespace WaveEquationProject {
 
+static unsigned int helper_degree(const std::string &param_file) {
+
+  InputParser parser;
+  parser.parse_parameters(param_file);
+
+  std::string method = parser.get_solver_type();
+
+  if (method == "EXPLICIT") {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+
+template <int dim>
+double WaveEquation<dim>::get_point_value(const Point<dim> &p) const {
+  double local_value = 0.0;
+
+  // Search efficiently: Only the process owning the cell computes the value.
+  for (const auto &cell : dof_handler.active_cell_iterators()) {
+    if (cell->is_locally_owned()) {
+      if (cell->point_inside(p)) {
+        local_value = VectorTools::point_value(dof_handler, U, p);
+        break;
+      }
+    }
+  }
+
+  const double global_value =
+      Utilities::MPI::sum(local_value, mpi_communicator);
+  return global_value;
+}
+
 // WAVE EQUATION CLASS IMPLEMENTATION
 
 /**
@@ -39,7 +72,8 @@ WaveEquation<dim>::WaveEquation(const std::string &param_file)
                         Triangulation<dim>::smoothing_on_coarsening)),
 
       // fe: Lagrangian Q1 elements (linear basis functions).
-      fe(2),
+      fe(helper_degree(param_file)),
+
       // dof_handler: Manages the enumeration of Degrees of Freedom on the mesh.
       dof_handler(triangulation) {
   // --- PARAMETER HANDLING ---
@@ -54,6 +88,7 @@ WaveEquation<dim>::WaveEquation(const std::string &param_file)
   this->final_time = parser.get_final_time();
   this->output_time_step = parser.get_output_frequency();
   this->scenario_id = parser.get_scenario_id();
+  this->refinement_level = parser.get_refinement_level();
 
   // Gestione Solver Type (Stringa -> Enum)
   std::string solver_str = parser.get_solver_type();
@@ -123,7 +158,7 @@ WaveEquation<dim>::WaveEquation(const std::string &param_file)
     pcout << "Scenario 6: Time-Dependent BCs (Pumping Wall)" << std::endl;
 
     initial_u0 = std::make_shared<Functions::ZeroFunction<dim>>();
-    initial_v0 = std::make_shared<Functions::ZeroFunction<dim>>();
+    initial_v0 = std::make_shared<InitialValuesV_MovingWall<dim>>();
     initial_forcing_term = std::make_shared<Functions::ZeroFunction<dim>>();
 
     boundary_function = std::make_shared<BoundaryFunction_MovingWall<dim>>();
@@ -150,18 +185,10 @@ template <int dim> void WaveEquation<dim>::make_grid() {
   // Create a unit square [0,1]^d
   GridGenerator::hyper_cube(triangulation, 0, 1);
 
-  int tmp_int_ref;
-  if (dim == 2) {
-    tmp_int_ref = 6;
-  } else {
-    tmp_int_ref = 4;
-  }
-  // Refine the mesh globally 'n' times.
-  // 6 refinements = 2^6 = 4096 cells in 2D. (Adjust as needed for convergence
-  // tests the numer of refinements)
-  triangulation.refine_global(tmp_int_ref);
+  triangulation.refine_global(this->refinement_level);
 
-  pcout << "  Number of active cells: " << triangulation.n_global_active_cells()
+  pcout << "  Refinement Level: " << this->refinement_level << std::endl;
+  pcout << "  Active cells: " << triangulation.n_global_active_cells()
         << std::endl;
 }
 
@@ -598,17 +625,23 @@ template <int dim> void WaveEquation<dim>::solve_IMPLICIT() {
     // Update Acceleration for next step
     A = A_new;
 
-    // debug print 2:
-    // pcout << " -> CG Iter: " << solver_control.last_step() << std::endl;
+    Point<dim> center_point;
+    for (unsigned int d = 0; d < dim; ++d)
+      center_point[d] = 0.5;
 
-    // Output results at specified intervals
+    double u_num = get_point_value(center_point);
+
+    double u_ex = 0.0;
+    if (scenario_id == 1) {
+      exact_solution->set_time(time);
+      u_ex = exact_solution->value(center_point);
+    }
+
+    if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0) {
+      std::ofstream probe_file("output_results/dispersion.csv", std::ios::app);
+      probe_file << time << "," << u_num << "," << u_ex << "\n";
+    }
     if (time_step_number % output_time_step == 0) {
-
-      // debug print 3:
-      /*pcout << "Step " << time_step_number
-                << " (t=" << time << ")"
-                << " -> CG Iter: " << solver_control.last_step()
-                << " [Output Saved]" << std::endl; */
 
       output_results(time_step_number);
     }
@@ -669,39 +702,62 @@ template <int dim> void WaveEquation<dim>::compute_lumped_mass_matrix() {
  * Sets time_step = 0.9 * h_min / (c * sqrt(dim))
  */
 template <int dim> void WaveEquation<dim>::auto_check_cfl_condition() {
-  pcout << "  Auto_Checking CFL Condition..." << std::endl;
+  pcout << "  Checking Time Step / CFL Condition..." << std::endl;
 
-  // Find local minimum h
+  // 1. Calculate the Physics-Based Optimal Time Step
+  //    Optimal dt ~ h_min / speed.
   double min_h_local = std::numeric_limits<double>::max();
-
   for (const auto &cell : dof_handler.active_cell_iterators()) {
     if (cell->is_locally_owned()) {
       min_h_local = std::min(min_h_local, cell->diameter());
     }
   }
-
-  // Find global minimum h
   const double min_h_global =
       Utilities::MPI::min(min_h_local, mpi_communicator);
 
-  // Define Wave Speed
+  // 2. Retrieve Polynomial Degree (p)
+  const unsigned int degree = fe.degree;
+
+  // 3. Define Wave Speed (c)
   const double wave_speed = 1.0;
 
-  // Calculate Critical Time Step
-  // CFL Limit: dt <= h / (c * sqrt(d))
-  const double dt_critical = (min_h_global / (wave_speed * std::sqrt(dim)));
+  // 4. Calculate Critical Time Step (Theoretical Limit)
+  //    dt <= h / (c * sqrt(dim) * p^2)
+  double denominator = wave_speed * std::sqrt(dim);
+  if (degree > 1) {
+    denominator *= (degree * degree);
+  }
 
-  // Apply Safety Factor (0.5) to ensure stability
-  this->time_step = dt_critical * 0.25;
+  const double dt_critical = min_h_global / denominator;
 
-  // Report
+  // 5. APPLY LOGIC BASED ON SOLVER TYPE
+  if (method_type == EXPLICIT) {
+    // --- CASE: EXPLICIT ---
+    // Strict Stability Requirement. We ignore user input to prevent crashes.
+    this->time_step = dt_critical * 0.5; // Safety factor of 0.5
+
+  } else {
+    // --- CASE: IMPLICIT ---
+    // Unconditional Stability. We focus on Accuracy vs User Control.
+
+    if (this->time_step <= 0.0) {
+      this->time_step = dt_critical;
+    } else if (this->time_step > dt_critical) {
+      pcout << "  [Implicit Solver] User input (" << this->time_step
+            << ") is too large for this grid." << std::endl;
+      pcout << "  -> Clamping to optimal limit for accuracy." << std::endl;
+      this->time_step = dt_critical;
+    }
+  }
+
+  // 6. REPORT (Your preferred format)
   pcout << "  ------------------------------------------" << std::endl;
   pcout << "  | AUTOMATIC TIME STEP SELECTION          |" << std::endl;
   pcout << "  ------------------------------------------" << std::endl;
-  pcout << "  | Min Element Size (h): " << min_h_global << std::endl;
+  pcout << "  | Mesh Size (h_min):    " << min_h_global << std::endl;
+  pcout << "  | Polynomial Degree:    " << degree << std::endl;
   pcout << "  | Critical Limit:       " << dt_critical << std::endl;
-  pcout << "  | -> NEW Time Step:     " << this->time_step << " (Safety: 90%)"
-        << std::endl;
+  pcout << "  | -> NEW Time Step:     " << this->time_step << std::endl;
   pcout << "  ------------------------------------------" << std::endl;
 }
 
@@ -747,71 +803,42 @@ void WaveEquation<dim>::force_ghost_sync(
  * 5. Selects and runs the appropriate time-stepping solver.
  */
 template <int dim> void WaveEquation<dim>::run() {
-
-  pcout << "===========================================" << std::endl;
-  pcout << "   WAVE EQUATION SOLVER " << std::endl;
-  pcout << "===========================================" << std::endl;
-
-  // --- OUTPUT DIRECTORY SETUP ---
-  const std::string output_folder = "output_results";
-
-  // Filesystem operations must be done by a single process to avoid race
-  // conditions.
-  if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0) {
-
-    // Check if directory exists before creating it
-    if (!std::filesystem::exists(output_folder)) {
-      std::filesystem::create_directories(output_folder);
-    }
-  }
-
-  // CRITICAL: All other processes must wait here until Rank 0 has finished
-  // creating the directory. If we don't wait, Rank 1 might try to write
-  // a file to a non-existent folder, causing a crash.
-  MPI_Barrier(mpi_communicator);
-
-  // --- INITIALIZATION PHASE ---
-
-  make_grid();         // Generate geometry
-  setup_system();      // Distribute DoFs and init matrices
-  assemble_matrices(); // Compute M and K (static)
-  if (method_type != IMPLICIT) {
-    auto_check_cfl_condition();
-  } // Automate time-step selection based on mesh size
-  solve_initial_conditions(); // Compute A0 consistent with U0, V0
-
-  pcout << "Initial conditions computed. Starting simulation..." << std::endl;
-
-  const std::string energy_folder = "output_energy";
+  pcout << "=== WAVE EQUATION SOLVER ===" << std::endl;
 
   if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0) {
-    if (!std::filesystem::exists(energy_folder))
-      std::filesystem::create_directories(energy_folder);
-  }
 
-  MPI_Barrier(mpi_communicator);
+    if (!std::filesystem::exists("output_results"))
+      std::filesystem::create_directories("output_results");
+    if (!std::filesystem::exists("output_energy"))
+      std::filesystem::create_directories("output_energy");
 
-  if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0) {
-    std::ofstream energy_file("output_energy/energy.csv"); // truncate
+    std::ofstream probe_file("output_results/dispersion.csv");
+    probe_file << "time,u_numerical,u_exact\n";
+    probe_file.close();
+
+    std::ofstream energy_file("output_energy/energy.csv");
     energy_file << "t,E\n";
+    energy_file.close();
   }
-  MPI_Barrier(mpi_communicator);
-  //
 
-  // Save the state at t=0
+  MPI_Barrier(mpi_communicator);
+
+  make_grid();
+  setup_system();
+  assemble_matrices();
+  auto_check_cfl_condition();
+  solve_initial_conditions();
+
   output_results(0);
 
-  // --- SOLVER SELECTION ---
   if (method_type == IMPLICIT) {
     solve_IMPLICIT();
-  } else if (method_type == EXPLICIT) {
+  } else {
     solve_EXPLICIT();
   }
-  pcout << "===========================================" << std::endl;
-  pcout << "   SIMULATION COMPLETED " << std::endl;
-  pcout << "===========================================" << std::endl;
-}
 
+  pcout << "=== SIMULATION COMPLETED ===" << std::endl;
+}
 // OUTPUT ROUTINES
 
 /**
@@ -970,6 +997,23 @@ template <int dim> void WaveEquation<dim>::solve_EXPLICIT() {
     // --- SYNC GHOSTS FOR V ---
     force_ghost_sync(V_owned, V);
 
+    Point<dim> center_point;
+    for (unsigned int d = 0; d < dim; ++d)
+      center_point[d] = 0.5;
+
+    double u_num = get_point_value(center_point);
+
+    double u_ex = 0.0;
+    if (scenario_id == 1) {
+      exact_solution->set_time(time);
+      u_ex = exact_solution->value(center_point);
+    }
+
+    if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0) {
+      std::ofstream probe_file("output_results/dispersion.csv", std::ios::app);
+      probe_file << time << "," << u_num << "," << u_ex << "\n";
+    }
+
     // --------------------------------------------------------
     // OUTPUT
     // --------------------------------------------------------
@@ -1029,7 +1073,7 @@ void WaveEquation<dim>::output_results(const unsigned int step) {
   // 2) Energy logging (rank 0 only)
   const double E = compute_energy();
   if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0) {
-    static std::ofstream energy_file("output_energy/energy.csv", std::ios::app);
+    std::ofstream energy_file("output_energy/energy.csv", std::ios::app);
     energy_file << time << "," << E << "\n";
   }
 }

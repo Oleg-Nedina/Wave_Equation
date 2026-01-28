@@ -144,6 +144,7 @@ private:
   void force_ghost_sync(const TrilinosWrappers::MPI::Vector &source_owned,
                         TrilinosWrappers::MPI::Vector &destination_ghosted);
   void solve_EXPLICIT();
+  double get_point_value(const Point<dim> &p) const;
 
   // MEMBER VARIABLES
 
@@ -201,6 +202,7 @@ private:
   double time_step;
   double final_time;
   unsigned int output_time_step;
+  unsigned int refinement_level;
 
   // Newmark-beta parameters
   TimeType method_type;
