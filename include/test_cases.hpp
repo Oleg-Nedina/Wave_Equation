@@ -228,15 +228,14 @@ public:
                        const unsigned int /*component*/ = 0) const override {
     double time = this->get_time();
 
-    // Applichiamo il movimento SOLO sulla parete sinistra (x è molto vicino a
-    // 0)
+    // Apply movement on left wall ONLY (x very close to 0)
     if (std::abs(p[0]) < 1e-10) {
-      // Movimento sinusoidale nel tempo, modulato da una seno nello spazio
-      // per tenere gli angoli fermi (evita discontinuità).
+      // Sinusoidal motion in time, moduled by a spatial sine
+      // to keep angles still (avoid discontinuities)
       return 0.5 * std::sin(5.0 * time) * std::sin(numbers::PI * p[1]);
     }
 
-    // Tutte le altre pareti rimangono ferme
+    // Every other wall stays still
     return 0.0;
   }
 };
