@@ -24,6 +24,8 @@ The code is designed to be modular, extensible, and reproducible, making it suit
 - No recompilation required when changing physical or numerical parameters
 - Output compatible with ParaView for visualization
 - Designed for execution inside a controlled Apptainer container
+- Mass Lumping Implementation
+- Automated Scaling Analysis
 
 ## Requirements
 
@@ -66,8 +68,8 @@ mpirun -n <N_PROCS> ./wave_solver ../include/parameters.prm
 
 ```
 
-* `<N_PROCS>`: number of MPI processes
-* `parameters.prm`: runtime configuration file
+- `<N_PROCS>`: number of MPI processes
+- `parameters.prm`: runtime configuration file
 
 ### Example
 
@@ -75,6 +77,29 @@ mpirun -n <N_PROCS> ./wave_solver ../include/parameters.prm
 mpirun -n 4 ./wave_solver ../include/parameters.prm
 
 ```
+
+## Performance Analysis
+
+The project includes automated tools to evaluate the parallel efficiency on HPC clusters.
+
+### Scaling Tests
+
+To ensure the reliability of the results, the weak scaling analysis accounts for the **CFL condition** ($dt \propto h$): when the mesh is refined, the physical simulation time is halved to keep the number of time steps constant.
+
+1. **Run data generation (inside Apptainer):**
+
+   ```bash
+   python3 scripts/strong_scaling.py
+   python3 scripts/weak_scaling.py
+   ```
+
+2. ## Generate plots (outside Apptainer)
+
+   ```bash
+   source /software/pyplot/bin/activate
+   python3 scripts/strong_scaling.py
+   python3 scripts/weak_scaling.py
+   ```
 
 ## Runtime Configuration (parameters.prm)
 
@@ -87,11 +112,11 @@ include/parameters.prm
 
 The parameter file contains a structured and documented configuration that allows the user to modify:
 
-* Time step size
-* Final simulation time
-* Mesh resolution
-* Physical parameters
-* Output and solver settings
+- Time step size
+- Final simulation time
+- Mesh resolution
+- Physical parameters
+- Output and solver settings
 
 No recompilation is required when modifying these values. This design enables rapid testing and experimentation, while keeping the numerical code clean, modular, and independent of the simulation setup.
 
@@ -116,7 +141,9 @@ The repository is organized to clearly separate source code, configuration files
 │   └── wave_equation.hpp   # Solver class declaration
 └── repos/                  # Reports and references
     └── report_finale_pde_parziale.pdf
-
+├── scripts/                # performance analysis and automation scripts
+│   
+│   
 ─ build/                  # Build directory (not versioned)
 ```
 
@@ -133,23 +160,23 @@ The solver produces output files compatible with ParaView, enabling efficient po
 
 ### 2D visualization tips
 
-* Apply "Warp By Scalar"
-* Scalar: displacement
-* Normal: 0 0 1
-* Disable 2D mode to freely rotate the view
+- Apply "Warp By Scalar"
+- Scalar: displacement
+- Normal: 0 0 1
+- Disable 2D mode to freely rotate the view
 
 ## Mathematical Background
 
 The project includes a detailed mathematical formulation of the problem, covering:
 
-* Strong and weak forms of the wave equation
-* Spatial discretization using the finite element method
-* Semi-discrete Newmark time integration scheme
+- Strong and weak forms of the wave equation
+- Spatial discretization using the finite element method
+- Semi-discrete Newmark time integration scheme
 
 For readability reasons, the full mathematical derivation is not reproduced directly in this README. Refer instead to:
 
-* `repos/`: detailed mathematical derivations and notes
-* `wave_equation.cpp`: implementation details of the numerical scheme
+- `repos/`: detailed mathematical derivations and notes
+- `wave_equation.cpp`: implementation details of the numerical scheme
 
 ## Notes
 
@@ -157,10 +184,10 @@ This repository represents a complete and functional implementation of a numeric
 
 The focus of the project is on:
 
-* correctness of the numerical scheme,
-* clarity of the software structure,
-* reproducibility of results,
-* separation between implementation and configuration.
+- correctness of the numerical scheme,
+- clarity of the software structure,
+- reproducibility of results,
+- separation between implementation and configuration.
 
 The code is intended primarily for educational and research purposes, and can serve as a solid starting point for extensions such as alternative time integration schemes, different boundary conditions, or more advanced parallel strategies.
 
@@ -168,19 +195,18 @@ The code is intended primarily for educational and research purposes, and can se
 
 This project was developed as part of a PDE / Numerical Analysis coursework, with the following goals:
 
-* Implement a physically consistent wave equation solver
-* Combine finite element discretization with second-order time integration
-* Exploit MPI parallelism in a clean and scalable way
-* Enable fast experimentation through runtime configuration files
+- Implement a physically consistent wave equation solver
+- Combine finite element discretization with second-order time integration
+- Exploit MPI parallelism in a clean and scalable way
+- Enable fast experimentation through runtime configuration files
 
 While the solver is not optimized for large-scale production runs, it is designed to be robust, readable, and extensible, making it suitable for academic use and further development.
 
 ## Final Remarks
 
-* All numerical and physical parameters are controlled via `parameters.prm`
-* No recompilation is required to change the simulation setup
-* The build system is fully based on CMake
-* Visualization is handled externally via ParaView
+- All numerical and physical parameters are controlled via `parameters.prm`
+- No recompilation is required to change the simulation setup
+- The build system is fully based on CMake
+- Visualization is handled externally via ParaView
 
 This repository provides a self-contained and well-documented reference implementation of a parallel wave equation solver using deal.II and MPI
-
