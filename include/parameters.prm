@@ -4,7 +4,7 @@
 
 subsection Time Settings
     set Time step        = 0.0
-    set Final time       = 3.0
+    set Final time       = 1.0
     set Output frequency = 1
 end
 
@@ -15,16 +15,16 @@ subsection Scenario
     # 4 = Raindrops
     # 5 = Ring Implosion
     # 6 = Moving Wall
-    set Scenario ID      = 6
+    set Scenario ID      = 1
 
     # Refinement Level must be INSIDE this subsection
     # 6 = Coarse (for testing), 8 = Fine (for cluster)
-    set Refinement level = 6
+    set Refinement level = 8
 end
 
 subsection Solver Settings
     # valid options: IMPLICIT | EXPLICIT
-    set Method           = IMPLICIT
+    set Method           = EXPLICIT
 
     # Newmark-Beta (Only for IMPLICIT)
     # Unconditionally stable: Beta=0.25, Gamma=0.5

@@ -28,19 +28,18 @@ template <int dim>
 double WaveEquation<dim>::get_point_value(const Point<dim> &p) const {
   double local_value = 0.0;
 
-  // Search efficiently: Only the process owning the cell computes the value.
-  for (const auto &cell : dof_handler.active_cell_iterators()) {
-    if (cell->is_locally_owned()) {
-      if (cell->point_inside(p)) {
-        local_value = VectorTools::point_value(dof_handler, U, p);
-        break;
-      }
-    }
+  try {
+    // Let Deal.II search for the point.
+    // It throws an exception if the current MPI rank does not own it.
+    local_value = VectorTools::point_value(dof_handler, U, p);
+  } catch (const dealii::ExceptionBase &) {
+    // This MPI process does not own the point. Leave value as 0.0.
+    local_value = 0.0;
   }
 
-  const double global_value =
-      Utilities::MPI::sum(local_value, mpi_communicator);
-  return global_value;
+  // Safely sum across all processors. Only the true owner contributes the
+  // actual value.
+  return Utilities::MPI::sum(local_value, mpi_communicator);
 }
 
 // WAVE EQUATION CLASS IMPLEMENTATION
@@ -1050,8 +1049,7 @@ void WaveEquation<dim>::output_results(const unsigned int step) {
   // 1) Ensure ghost values are valid BEFORE DataOut reads them
   U.update_ghost_values();
   V.update_ghost_values();
-  A.update_ghost_values(); // anche se non serve per energia, serve per output
-                           // acceleration
+  A.update_ghost_values();
 
   DataOut<dim> data_out;
   data_out.attach_dof_handler(dof_handler);
@@ -1079,7 +1077,7 @@ void WaveEquation<dim>::output_results(const unsigned int step) {
 }
 
 // --- TEMPLATE INSTANTIATION ---
-// Forces the compiler to generate code for the 2D case.
+
 template class WaveEquation<3>;
 template class WaveEquation<2>;
 
