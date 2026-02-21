@@ -1,1 +1,16 @@
+# Build artifacts
 build/
+bin/
+
+# Simulation outputs
+output_results/
+output_energy/
+
+# Python artifacts and plots
+__pycache__/
+*.png
+scripts/parameters_temp.prm
+
+# System files
+.DS_Store
+
