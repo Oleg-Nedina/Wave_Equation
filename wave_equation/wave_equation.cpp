@@ -75,21 +75,18 @@ WaveEquation<dim>::WaveEquation(const std::string &param_file)
 
       // dof_handler: Manages the enumeration of Degrees of Freedom on the mesh.
       dof_handler(triangulation) {
-  // --- PARAMETER HANDLING ---
-  // Ideally, we would read parameters from the .prm file here.
-  // WE WILL IMPLEMENT THIS LATER. FOR NOW, WE SET DEFAULTS DIRECTLY.
-
-  // --- 1. PARSING DEI PARAMETRI ---
+  
+  // --- PARAMETERS PARSING ---
   InputParser parser;
   parser.parse_parameters(param_file);
-  // --- 2. ASSEGNAZIONE PARAMETRI ALLA CLASSE ---
+  // --- ASSIGNMENT OF PARAMETERS TO CLASS ---
   this->time_step = parser.get_time_step();
   this->final_time = parser.get_final_time();
   this->output_time_step = parser.get_output_frequency();
   this->scenario_id = parser.get_scenario_id();
   this->refinement_level = parser.get_refinement_level();
 
-  // Gestione Solver Type (Stringa -> Enum)
+  // Solver Type Management (String -> Enum)
   std::string solver_str = parser.get_solver_type();
   if (solver_str == "IMPLICIT") {
     this->method_type = IMPLICIT;
@@ -400,7 +397,7 @@ void WaveEquation<dim>::solve_initial_conditions() {
   TimerOutput::Scope t(computing_timer, "Initial Conditions");
   pcout << "Computing Initial Conditions..." << std::endl;
 
-  // --- 1. Interpolate U0 and V0 ---
+  // --- Interpolate U0 and V0 ---
   // Project analytical functions onto the FEM space
   VectorTools::interpolate(dof_handler, *initial_u0, U);
   VectorTools::interpolate(dof_handler, *initial_v0, V);
@@ -414,7 +411,7 @@ void WaveEquation<dim>::solve_initial_conditions() {
   // Store U0 for the first time step logic
   U_old = U;
 
-  // --- 2. Construct RHS: b = F(0) - K * U0 ---
+  // --- Construct RHS: b = F(0) - K * U0 ---
 
   // Prepare a vector for the RHS (non-ghosted, fully distributed)
   TrilinosWrappers::MPI::Vector rhs_initial(locally_owned_dofs,
@@ -439,7 +436,7 @@ void WaveEquation<dim>::solve_initial_conditions() {
   // Subtract K*U from F: rhs_initial = F - K*U
   rhs_initial.add(-1.0, tmp);
 
-  // --- 3. Solve M * A0 = RHS ---
+  // --- Solve M * A0 = RHS ---
 
   // Setup Solver Control: Max 1000 iterations, tolerance relative to RHS norm
   SolverControl solver_control(10000, 1e-10 * rhs_initial.l2_norm());
@@ -505,7 +502,7 @@ template <int dim> void WaveEquation<dim>::assemble_matrix_IMPLICITO() {
 template <int dim> void WaveEquation<dim>::solve_IMPLICIT() {
   pcout << "Starting Implicit Time Loop (Newmark-Beta)..." << std::endl;
 
-  // 1. Build the system matrix (constant if dt is constant)
+  // Build the system matrix (constant if dt is constant)
   // Matrix structure: A_sys = (1/(beta*dt^2)) * M + K_ij
   assemble_matrix_IMPLICITO();
 
@@ -545,7 +542,7 @@ template <int dim> void WaveEquation<dim>::solve_IMPLICIT() {
     // pcout << "  Step " << time_step_number << " (t=" << time << ")" <<
     // std::flush;
 
-    // 1. CONSTRUCT RHS
+    // CONSTRUCT RHS
     // RHS = F_{n+1} + M * (Predictor Terms)
 
     // a. Compute Forcing Term F_{n+1}
@@ -576,7 +573,7 @@ template <int dim> void WaveEquation<dim>::solve_IMPLICIT() {
     mass_matrix.vmult(U_owned, TMP_owned);
     RHS_owned.add(1.0, U_owned);
 
-    // 2. APPLY BOUNDARY CONDITIONS
+    // APPLY BOUNDARY CONDITIONS
 
     // We apply Dirichlet BCs strongly to the linear system.
     // Note: In Trilinos, modifying the matrix after assembly can be expensive,
@@ -592,7 +589,7 @@ template <int dim> void WaveEquation<dim>::solve_IMPLICIT() {
     MatrixTools::apply_boundary_values(boundary_values, system_matrix, U_owned,
                                        RHS_owned, false);
 
-    // 3. SOLVE LINEAR SYSTEM
+    // SOLVE LINEAR SYSTEM
 
     // Solve: A_sys * U_{n+1} = RHS
     solver.solve(system_matrix, U_owned, RHS_owned, preconditioner);
@@ -604,7 +601,7 @@ template <int dim> void WaveEquation<dim>::solve_IMPLICIT() {
     U_old = U;
     U = U_owned; // U now holds U_{n+1}
 
-    // 4. CORRECTOR STEP (UPDATE V and A)
+    // CORRECTOR STEP (UPDATE V and A)
 
     // Calculate A_{n+1} using the displacement difference.
     // Formula: A_{n+1} = c1*(U_{n+1} - U_n) - c2*V_n - c3*A_n
@@ -669,15 +666,15 @@ template <int dim> void WaveEquation<dim>::solve_IMPLICIT() {
 template <int dim> void WaveEquation<dim>::compute_lumped_mass_matrix() {
   pcout << "  Computing Lumped Mass Matrix..." << std::endl;
 
-  // 1. Create ones vector
+  // CREATE ONES VECTOR
   TrilinosWrappers::MPI::Vector ones(locally_owned_dofs, mpi_communicator);
   ones = 1.0;
 
-  // 2. Perform Matrix-Vector multiplication: M_lumped = M_consistent * ones
+  // PERFORM MATRIX-VECTOR MULTIPLICATION: M_lumped = M_consistent * ones
   // This effectively sums rows.
   mass_matrix.vmult(lumped_mass_matrix, ones);
 
-  // 3. Compute Inverse Mass Vector (for explicit division)
+  // COMPUTE INVERSE MASS VECTOR (for explicit division)
   // Reusing ones vector or create new one to store 1/M.
   // Note: Must iterate manually because Trilinos vectors don't support
   // element-wise division easily.
@@ -703,7 +700,7 @@ template <int dim> void WaveEquation<dim>::compute_lumped_mass_matrix() {
 template <int dim> void WaveEquation<dim>::auto_check_cfl_condition() {
   pcout << "  Checking Time Step / CFL Condition..." << std::endl;
 
-  // 1. Calculate the Physics-Based Optimal Time Step
+  // CALCULATE PHYSICS-BASED OPTIMAL TIME STEP
   //    Optimal dt ~ h_min / speed.
   double min_h_local = std::numeric_limits<double>::max();
   for (const auto &cell : dof_handler.active_cell_iterators()) {
@@ -714,13 +711,13 @@ template <int dim> void WaveEquation<dim>::auto_check_cfl_condition() {
   const double min_h_global =
       Utilities::MPI::min(min_h_local, mpi_communicator);
 
-  // 2. Retrieve Polynomial Degree (p)
+  // RETRIEVE POLYNOMIAL DEGREE (p)
   const unsigned int degree = fe.degree;
 
-  // 3. Define Wave Speed (c)
+  // DEFINE WAVE SPEED (c)
   const double wave_speed = 1.0;
 
-  // 4. Calculate Critical Time Step (Theoretical Limit)
+  // CALCULATE CRITICAL TIME STEP (Theoretical Limit)
   //    dt <= h / (c * sqrt(dim) * p^2)
   double denominator = wave_speed * std::sqrt(dim);
   if (degree > 1) {
@@ -729,7 +726,7 @@ template <int dim> void WaveEquation<dim>::auto_check_cfl_condition() {
 
   const double dt_critical = min_h_global / denominator;
 
-  // 5. APPLY LOGIC BASED ON SOLVER TYPE
+  // APPLY LOGIC BASED ON SOLVER TYPE
   if (method_type == EXPLICIT) {
     // --- CASE: EXPLICIT ---
     // Strict Stability Requirement. We ignore user input to prevent crashes.
@@ -749,7 +746,7 @@ template <int dim> void WaveEquation<dim>::auto_check_cfl_condition() {
     }
   }
 
-  // 6. REPORT (Your preferred format)
+  // REPORT
   pcout << "  ------------------------------------------" << std::endl;
   pcout << "  | AUTOMATIC TIME STEP SELECTION          |" << std::endl;
   pcout << "  ------------------------------------------" << std::endl;
@@ -849,7 +846,7 @@ template <int dim> void WaveEquation<dim>::run() {
 template <int dim> void WaveEquation<dim>::solve_EXPLICIT() {
   pcout << "Starting Explicit Time Loop (Velocity Verlet)..." << std::endl;
 
-  // --- 1. SETUP & MASS LUMPING ---
+  // --- SETUP & MASS LUMPING ---
   // Compute M_lumped (diagonal) and its inverse for fast inversion.
   compute_lumped_mass_matrix();
 
@@ -864,7 +861,7 @@ template <int dim> void WaveEquation<dim>::solve_EXPLICIT() {
   U_owned = U;
   V_owned = V;
 
-  // --- 2. COMPUTE A0 (CONSISTENT WITH LUMPED MASS) ---
+  // --- COMPUTE A0 (CONSISTENT WITH LUMPED MASS) ---
   // Compute A0 = M_lumped^-1 * (F_ext - K*U0).
 
   // Calculate Internal Force: F_int = K * U0
@@ -910,7 +907,7 @@ template <int dim> void WaveEquation<dim>::solve_EXPLICIT() {
 
   unsigned int time_step_number = 0;
 
-  // --- 3. TIME LOOP ---
+  // --- TIME LOOP ---
   while (time < final_time) {
     time += time_step;
     time_step_number++;
@@ -1046,7 +1043,7 @@ template <int dim>
 void WaveEquation<dim>::output_results(const unsigned int step) {
   TimerOutput::Scope t(computing_timer, "Output");
 
-  // 1) Ensure ghost values are valid BEFORE DataOut reads them
+  // Ensure ghost values are valid BEFORE DataOut reads them
   U.update_ghost_values();
   V.update_ghost_values();
   A.update_ghost_values();
@@ -1068,7 +1065,7 @@ void WaveEquation<dim>::output_results(const unsigned int step) {
   data_out.write_vtu_with_pvtu_record("output_results/", "solution", step,
                                       mpi_communicator);
 
-  // 2) Energy logging (rank 0 only)
+  // Energy logging (rank 0 only)
   const double E = compute_energy();
   if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0) {
     std::ofstream energy_file("output_energy/energy.csv", std::ios::app);
