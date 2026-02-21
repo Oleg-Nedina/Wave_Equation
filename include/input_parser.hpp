@@ -13,7 +13,7 @@ class InputParser {
 public:
   InputParser();
 
-  // Funzione principale di parsing
+  // Main parsing function
   void parse_parameters(const std::string &filename);
 
   // Getters
@@ -29,11 +29,10 @@ public:
   double get_gamma() const;
 
 private:
-  // 'mutable' permette ai metodi const di modificare lo stato interno
+  // 'mutable' consent methods const to modify internal state
   mutable ParameterHandler prm;
 
-  // Dichiarazione della funzione privata (deve stare qui, PRIMA della chiusura
-  // della classe)
+  // Private function declaration
   void declare_parameters();
 };
 } // namespace WaveEquationProject
